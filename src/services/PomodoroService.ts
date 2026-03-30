@@ -28,6 +28,11 @@ import {
 	createUTCDateFromLocalCalendarDate,
 } from "../utils/dateUtils";
 import { getSessionDuration, timerWorker } from "../utils/pomodoroUtils";
+import {
+	loadPomodoroLocalStateSnapshot,
+	savePomodoroLocalStateSnapshot,
+	type PomodoroLocalStateSnapshot,
+} from "../fork/pomodoro/PomodoroLocalStateStorage";
 
 export class PomodoroService {
 	private plugin: TaskNotesPlugin;
@@ -50,6 +55,14 @@ export class PomodoroService {
 			isRunning: false,
 			timeRemaining: plugin.settings.pomodoroWorkDuration * 60, // Default work duration in seconds
 		};
+	}
+
+	private persistLocalStateSnapshot(updates: PomodoroLocalStateSnapshot): void {
+		const currentSnapshot = loadPomodoroLocalStateSnapshot(this.plugin.app);
+		savePomodoroLocalStateSnapshot(this.plugin.app, {
+			...currentSnapshot,
+			...updates,
+		});
 	}
 
 	async initialize() {
@@ -91,17 +104,25 @@ export class PomodoroService {
 
 	async loadState() {
 		try {
-			const data = await this.plugin.loadData();
+			const localState = loadPomodoroLocalStateSnapshot(this.plugin.app);
 
-			if (data?.pomodoroState) {
-				this.state = data.pomodoroState;
+			const persistedTaskPath = localState.lastSelectedTaskPath;
+			if (typeof persistedTaskPath === "string" && persistedTaskPath.trim().length > 0) {
+				this.lastSelectedTaskPath = persistedTaskPath;
+			} else {
+				this.lastSelectedTaskPath = undefined;
+			}
+			this.lastSelectedTaskPathLoaded = true;
+
+			if (localState.pomodoroState) {
+				this.state = localState.pomodoroState;
 
 				// Validate loaded state
 				this.state.timeRemaining = Math.max(0, this.state.timeRemaining || 0);
 
 				// Clear any stale session from previous day
 				const today = formatDateForStorage(getTodayLocal());
-				const lastDate = data.lastPomodoroDate;
+				const lastDate = localState.lastPomodoroDate;
 				if (lastDate !== today) {
 					if (this.state.currentSession) {
 						this.state.currentSession = undefined;
@@ -144,10 +165,11 @@ export class PomodoroService {
 
 	async saveState() {
 		try {
-			const data = (await this.plugin.loadData()) || {};
-			data.pomodoroState = this.state;
-			data.lastPomodoroDate = formatDateForStorage(getTodayLocal());
-			await this.plugin.saveData(data);
+			this.persistLocalStateSnapshot({
+				pomodoroState: this.state,
+				lastPomodoroDate: formatDateForStorage(getTodayLocal()),
+				lastSelectedTaskPath: this.lastSelectedTaskPath,
+			});
 		} catch (error) {
 			console.error("Failed to save pomodoro state:", error);
 		}
@@ -157,9 +179,9 @@ export class PomodoroService {
 		this.lastSelectedTaskPath = taskPath;
 		this.lastSelectedTaskPathLoaded = true;
 		try {
-			const data = (await this.plugin.loadData()) || {};
-			data.lastSelectedTaskPath = taskPath;
-			await this.plugin.saveData(data);
+			this.persistLocalStateSnapshot({
+				lastSelectedTaskPath: taskPath,
+			});
 		} catch (error) {
 			console.error("Failed to save last selected task:", error);
 		}
@@ -170,8 +192,7 @@ export class PomodoroService {
 			return this.lastSelectedTaskPath;
 		}
 		try {
-			const data = await this.plugin.loadData();
-			const path = data?.lastSelectedTaskPath;
+			const path = loadPomodoroLocalStateSnapshot(this.plugin.app).lastSelectedTaskPath;
 			if (typeof path === "string" && path.trim().length > 0) {
 				this.lastSelectedTaskPath = path;
 			} else {
@@ -608,6 +629,9 @@ export class PomodoroService {
 		if (this.lastSelectedTaskPath === path) {
 			this.lastSelectedTaskPath = undefined;
 			this.lastSelectedTaskPathLoaded = true;
+			this.persistLocalStateSnapshot({
+				lastSelectedTaskPath: undefined,
+			});
 		}
 	}
 

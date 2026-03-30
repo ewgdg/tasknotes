@@ -77,6 +77,7 @@ import {
 	cleanupPluginRuntime,
 	initializePluginRuntime,
 } from "./bootstrap/pluginRuntime";
+import { migrateLoadedPluginData } from "./fork/pomodoro/DataMigrationService";
 
 export default class TaskNotesPlugin extends Plugin {
 	settings: TaskNotesSettings;
@@ -552,7 +553,8 @@ export default class TaskNotesPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const loadedData = await this.loadData();
+		let loadedData = await this.loadData();
+		loadedData = await migrateLoadedPluginData(this, loadedData);
 
 		// Migration: Remove old useNativeMetadataCache setting if it exists
 		if (loadedData && "useNativeMetadataCache" in loadedData) {

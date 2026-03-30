@@ -5,6 +5,7 @@ This is an Obsidian plugin. The plugin ID is `tasknotes`.
 ## Fork Repository
 
 This repository is a fork. Prefer changes that preserve upstream compatibility and reduce long-term rebase cost.
+If any other repository-local instruction conflicts with this section, follow this section.
 
 Use this priority order:
 1. Extend existing seams without modifying upstream source files.
