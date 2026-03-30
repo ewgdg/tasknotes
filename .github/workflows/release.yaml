@@ -63,4 +63,3 @@ jobs:
             main.js
             manifest.json
             styles.css
-          draft: true
