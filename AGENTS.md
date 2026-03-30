@@ -2,6 +2,17 @@
 
 This is an Obsidian plugin. The plugin ID is `tasknotes`.
 
+## Fork Repository
+
+This repository is a fork. Prefer changes that preserve upstream compatibility and reduce long-term rebase cost.
+
+Use this priority order:
+1. Extend existing seams without modifying upstream source files.
+2. Put fork-specific tests in `tests/unit/fork` and fork-specific docs in `docs/fork`.
+3. If upstream files must be changed, keep the patch minimal, local, and clearly attributable to fork-specific behavior.
+
+Do not spread fork-only behavior across unrelated upstream files when a dedicated fork-specific module or boundary would keep the divergence easier to maintain.
+
 ## Build & Test
 
 ```bash
@@ -44,6 +55,6 @@ npm run build         # Production build (without copying to vault)
 
 ---
 
-When you make changes, update docs/releases/unreleased.md. If your changes are related to a GitHub issue or PR, include acknowledgement of the individual who opened the issue or submitted the PR. Do not update unreleased.md for the addition of tests; unreleased.md is user-facing. 
+When you make changes, update docs/releases/unreleased.md. If your changes are related to a GitHub issue or PR, include acknowledgement of the individual who opened the issue or submitted the PR. Do not update unreleased.md for the addition of tests; unreleased.md is user-facing.
 
 You may update `.ops/` files locally as you work on items, but do not commit `.ops/` files. `.ops/` is local-only working state.
