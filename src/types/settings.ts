@@ -157,6 +157,7 @@ export interface TaskNotesSettings {
 	recurrenceMigrated?: boolean;
 	// Release notes tracking
 	lastSeenVersion?: string;
+	lastSeenReleaseNotesVersion?: string;
 	showReleaseNotesOnUpdate?: boolean;
 	// Status bar settings
 	showTrackedTasksInStatusBar: boolean;

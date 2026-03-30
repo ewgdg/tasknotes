@@ -56,6 +56,9 @@ jobs:
           EOF
           npm run build  # This includes CSS building via npm run build-css
 
+      - name: Validate bundled release notes
+        run: node scripts/check-release-notes-bundle.cjs
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

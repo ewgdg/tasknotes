@@ -1,26 +1,20 @@
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { execSync } from "child_process";
+import releaseNotesUtils from "./scripts/release-notes-utils.cjs";
+
+const { parseVersion, resolveReleaseNotesVersion } = releaseNotesUtils;
 
 // Read current version from manifest.json
 const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 const currentVersion = manifest.version;
 
-// Parse semantic version (supports pre-release versions like 4.0.0-beta.0)
-function parseVersion(version) {
-	const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-[\w.]+)?$/);
-	if (!match) return null;
-	return {
-		major: parseInt(match[1]),
-		minor: parseInt(match[2]),
-		patch: parseInt(match[3]),
-		full: version
-	};
-}
-
 // Get git tag date for a version
 function getVersionDate(version) {
 	try {
-		const output = execSync(`git log -1 --format=%aI ${version}`, { encoding: 'utf8' }).trim();
+		const output = execSync(`git log -1 --format=%aI ${version}`, {
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+		}).trim();
 		return output;
 	} catch (error) {
 		// If tag doesn't exist, return null
@@ -46,27 +40,50 @@ if (!current) {
 	process.exit(1);
 }
 
-// Find all versions in current minor series (e.g., 3.25.x)
+const resolvedCurrentReleaseNotesVersion = resolveReleaseNotesVersion(
+	currentVersion,
+	releaseFiles.map((version) => version.full)
+);
+if (!resolvedCurrentReleaseNotesVersion) {
+	console.error(`No release notes found for ${currentVersion} or any earlier compatible version`);
+	process.exit(1);
+}
+
+const releaseNotesSource = parseVersion(resolvedCurrentReleaseNotesVersion);
+if (!releaseNotesSource) {
+	console.error(`Invalid fallback release notes version: ${resolvedCurrentReleaseNotesVersion}`);
+	process.exit(1);
+}
+
+// Bundle notes from the source minor series so buffered fork releases inherit the latest upstream notes.
 const currentMinorVersions = releaseFiles.filter(v =>
-	v.major === current.major && v.minor === current.minor
+	v.major === releaseNotesSource.major && v.minor === releaseNotesSource.minor
 );
 
-// Find all versions from previous minor series (e.g., 3.24.x)
 const previousMinorVersions = releaseFiles.filter(v =>
-	v.major === current.major && v.minor === current.minor - 1
+	v.major === releaseNotesSource.major && v.minor === releaseNotesSource.minor - 1
 );
 
-// Bundle current minor + all patches from previous minor
 const versionsToBundle = [
-	...currentMinorVersions.map(v => v.full),
-	...previousMinorVersions.map(v => v.full)
+	...new Set([
+		resolvedCurrentReleaseNotesVersion,
+		...currentMinorVersions.map(v => v.full),
+		...previousMinorVersions.map(v => v.full)
+	])
 ];
 
-// Fetch dates and sort by date (newest first)
-const versionsWithDates = versionsToBundle.map(version => ({
-	version,
-	date: getVersionDate(version)
-})).sort((a, b) => {
+const versionsWithDates = versionsToBundle.map((version) => {
+	const usesFallbackContent = version === resolvedCurrentReleaseNotesVersion && version !== currentVersion;
+	const displayVersion = usesFallbackContent ? currentVersion : version;
+	const date = getVersionDate(displayVersion) ?? getVersionDate(version);
+
+	return {
+		version,
+		displayVersion,
+		date,
+		isCurrent: displayVersion === currentVersion
+	};
+}).sort((a, b) => {
 	// Versions without dates go to the end
 	if (!a.date && !b.date) return 0;
 	if (!a.date) return 1;
@@ -80,12 +97,12 @@ const imports = versionsWithDates.map(({ version }, index) =>
 	`import releaseNotes${index} from "../docs/releases/${version}.md";`
 ).join('\n');
 
-const releaseNotesArray = versionsWithDates.map(({ version, date }, index) => {
+const releaseNotesArray = versionsWithDates.map(({ displayVersion, date, isCurrent }, index) => {
 	return `	{
-		version: "${version}",
+		version: "${displayVersion}",
 		content: releaseNotes${index},
 		date: ${date ? `"${date}"` : 'null'},
-		isCurrent: ${version === currentVersion}
+		isCurrent: ${isCurrent}
 	}`;
 }).join(',\n');
 
@@ -103,6 +120,7 @@ export interface ReleaseNoteVersion {
 }
 
 export const CURRENT_VERSION = "${currentVersion}";
+export const CURRENT_RELEASE_NOTES_VERSION = "${resolvedCurrentReleaseNotesVersion}";
 export const RELEASE_NOTES_BUNDLE: ReleaseNoteVersion[] = [
 ${releaseNotesArray}
 ];
@@ -112,4 +130,7 @@ ${releaseNotesArray}
 writeFileSync("src/releaseNotes.ts", content);
 
 console.log(`✓ Generated release notes bundle for version ${currentVersion}`);
+if (resolvedCurrentReleaseNotesVersion !== currentVersion) {
+	console.log(`  Using release notes from ${resolvedCurrentReleaseNotesVersion} for current version ${currentVersion}`);
+}
 console.log(`  Bundled versions: ${versionsToBundle.join(', ')}`);

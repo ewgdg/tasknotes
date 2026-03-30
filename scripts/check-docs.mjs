@@ -2,6 +2,9 @@
 
 import fs from 'fs';
 import path from 'path';
+import releaseNotesUtils from './release-notes-utils.cjs';
+
+const { resolveReleaseNotesVersion } = releaseNotesUtils;
 
 const rootDir = process.cwd();
 const docsDir = path.join(rootDir, 'docs');
@@ -69,14 +72,24 @@ function verifyCanonicalDocsUrl() {
 function verifyReleaseIndexMatchesManifest() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const releaseIndex = fs.readFileSync(releaseIndexPath, 'utf8');
-  const releaseFile = path.join(docsDir, 'releases', `${manifest.version}.md`);
+  const releasesDir = path.join(docsDir, 'releases');
+  const availableReleaseVersions = fs.readdirSync(releasesDir)
+    .filter((name) => name.endsWith('.md') && name !== 'unreleased.md')
+    .map((name) => name.replace(/\.md$/, ''));
+  const resolvedReleaseVersion = resolveReleaseNotesVersion(manifest.version, availableReleaseVersions);
 
-  if (!fs.existsSync(releaseFile)) {
-    errors.push(`Missing release file for manifest version: docs/releases/${manifest.version}.md`);
+  if (!resolvedReleaseVersion) {
+    errors.push(`Missing release notes for manifest version ${manifest.version} and no fallback release note file was found`);
+    return;
   }
 
-  if (!releaseIndex.includes(`releases/${manifest.version}.md`)) {
-    errors.push(`docs/releases.md does not include current manifest version ${manifest.version}`);
+  const releaseFile = path.join(releasesDir, `${resolvedReleaseVersion}.md`);
+  if (!fs.existsSync(releaseFile)) {
+    errors.push(`Missing resolved release file: docs/releases/${resolvedReleaseVersion}.md`);
+  }
+
+  if (!releaseIndex.includes(`releases/${resolvedReleaseVersion}.md`)) {
+    errors.push(`docs/releases.md does not include release notes source ${resolvedReleaseVersion} for manifest version ${manifest.version}`);
   }
 }
 

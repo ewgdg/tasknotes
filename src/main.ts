@@ -78,6 +78,8 @@ import {
 	initializePluginRuntime,
 } from "./bootstrap/pluginRuntime";
 import { migrateLoadedPluginData } from "./fork/pomodoro/DataMigrationService";
+import { CURRENT_RELEASE_NOTES_VERSION } from "./releaseNotes";
+import { getReleaseNotesUpdateState } from "./utils/releaseNotesUpdatePolicy";
 
 export default class TaskNotesPlugin extends Plugin {
 	settings: TaskNotesSettings;
@@ -414,30 +416,36 @@ export default class TaskNotesPlugin extends Plugin {
 	async checkForVersionUpdate(): Promise<void> {
 		try {
 			const currentVersion = this.manifest.version;
-			const lastSeenVersion = this.settings.lastSeenVersion;
+			const releaseNotesUpdateState = getReleaseNotesUpdateState({
+				currentVersion,
+				currentReleaseNotesVersion: CURRENT_RELEASE_NOTES_VERSION,
+				lastSeenVersion: this.settings.lastSeenVersion,
+				lastSeenReleaseNotesVersion: this.settings.lastSeenReleaseNotesVersion,
+			});
 
-			// If this is a new install or version has changed, show release notes (if enabled)
-			if (lastSeenVersion && lastSeenVersion !== currentVersion) {
+			if (releaseNotesUpdateState.hasVersionChange) {
 				const showReleaseNotes = this.settings.showReleaseNotesOnUpdate ?? true;
-				if (showReleaseNotes) {
+				if (showReleaseNotes && releaseNotesUpdateState.shouldShowReleaseNotes) {
 					// Show release notes after a delay to ensure UI is ready
 					setTimeout(async () => {
 						await this.activateReleaseNotesView();
-						// Update lastSeenVersion immediately after showing the release notes
-						// This ensures they only show once per version
-						this.settings.lastSeenVersion = currentVersion;
+						this.settings.lastSeenVersion = releaseNotesUpdateState.nextLastSeenVersion;
+						this.settings.lastSeenReleaseNotesVersion =
+							releaseNotesUpdateState.nextLastSeenReleaseNotesVersion;
 						await this.saveSettings();
 					}, 1500); // Slightly longer delay than migration to avoid conflicts
 				} else {
-					// Still update lastSeenVersion even if not showing release notes
-					this.settings.lastSeenVersion = currentVersion;
+					this.settings.lastSeenVersion = releaseNotesUpdateState.nextLastSeenVersion;
+					this.settings.lastSeenReleaseNotesVersion =
+						releaseNotesUpdateState.nextLastSeenReleaseNotesVersion;
 					await this.saveSettings();
 				}
 			}
 
-			// Update lastSeenVersion if it hasn't been set yet (new install)
-			if (!lastSeenVersion) {
-				this.settings.lastSeenVersion = currentVersion;
+			if (!this.settings.lastSeenVersion) {
+				this.settings.lastSeenVersion = releaseNotesUpdateState.nextLastSeenVersion;
+				this.settings.lastSeenReleaseNotesVersion =
+					releaseNotesUpdateState.nextLastSeenReleaseNotesVersion;
 				await this.saveSettings();
 			}
 		} catch (error) {
