@@ -14,7 +14,7 @@ Use this priority order:
 
 Do not spread fork-only behavior across unrelated upstream files when a dedicated fork-specific module or boundary would keep the divergence easier to maintain.
 For fork-only changes such as BRAT/release plumbing, do not update `docs/releases/unreleased.md`.
-For fork releases intended to replace upstream installs, use a stable patch-buffer rule: if upstream is `A.B.C`, tag and release the fork as `A.B.(C+10)` unless there is a specific reason to choose a higher stable patch. Example: upstream `4.4.0` becomes fork `4.4.10`. Do not use fork-marked, prerelease, or four-part manifest/tag versions like `4.4.0-fork.0`, `4.4.0-beta.1`, or `4.4.0.1` when the goal is to supersede upstream. Keep fork identity in the repo or release notes, not the plugin version.
+For fork releases intended to replace upstream installs, use a stable patch-buffer rule: if upstream is `A.B.C`, tag and release the fork as `A.B.(C+1000)` unless there is a specific reason to choose a higher stable patch. Example: upstream `4.4.0` becomes fork `4.4.1000`. Do not use fork-marked, prerelease, or four-part manifest/tag versions like `4.4.0-fork.0`, `4.4.0-beta.1`, or `4.4.0.1` when the goal is to supersede upstream. Keep fork identity in the repo or release notes, not the plugin version.
 
 ## Build & Test
 
