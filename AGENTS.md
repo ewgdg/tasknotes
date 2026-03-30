@@ -13,6 +13,7 @@ Use this priority order:
 3. If upstream files must be changed, keep the patch minimal, local, and clearly attributable to fork-specific behavior.
 
 Do not spread fork-only behavior across unrelated upstream files when a dedicated fork-specific module or boundary would keep the divergence easier to maintain.
+For fork-only changes such as BRAT/release plumbing, do not update `docs/releases/unreleased.md`.
 
 ## Build & Test
 
