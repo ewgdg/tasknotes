@@ -6,7 +6,7 @@ on:
       - '*'
 
 env:
-  PLUGIN_NAME: tasknotes
+  PLUGIN_NAME: tasknotes-fork
 
 permissions:
   contents: write
