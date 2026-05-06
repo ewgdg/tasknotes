@@ -1,5 +1,6 @@
 import { App } from "obsidian";
 import { PomodoroService } from "../../../src/services/PomodoroService";
+import { formatDateForStorage, getTodayLocal } from "../../../src/utils/dateUtils";
 import { migrateLoadedPluginData } from "../../../src/fork/pomodoro/DataMigrationService";
 import { POMODORO_LOCAL_STORAGE_KEY } from "../../../src/fork/pomodoro/PomodoroLocalStateStorage";
 
@@ -40,6 +41,8 @@ describe("fork: PomodoroService local storage persistence", () => {
 	});
 
 	it("migrates legacy pomodoro runtime state out of plugin data", async () => {
+		const currentSessionStartTime = new Date().toISOString();
+		const currentLocalDate = formatDateForStorage(getTodayLocal());
 		const { app, plugin, getStoredData } = createPlugin({
 			tasksFolder: "Projects/Tasks",
 			pomodoroHistory: [{ id: "history-1" }],
@@ -49,14 +52,14 @@ describe("fork: PomodoroService local storage persistence", () => {
 				currentSession: {
 					id: "session-1",
 					taskPath: "Tasks/Deep Work.md",
-					startTime: "2026-03-29T10:00:00.000Z",
+					startTime: currentSessionStartTime,
 					plannedDuration: 25,
 					type: "work",
 					completed: false,
-					activePeriods: [{ startTime: "2026-03-29T10:00:00.000Z" }],
+					activePeriods: [{ startTime: currentSessionStartTime }],
 				},
 			},
-			lastPomodoroDate: "2026-03-29",
+			lastPomodoroDate: currentLocalDate,
 			lastSelectedTaskPath: "Tasks/Deep Work.md",
 		});
 		const loadedData = await plugin.loadData();

@@ -39,10 +39,12 @@ import {
 import { getProjectDisplayName } from "../utils/linkUtils";
 import {
 	formatDateForStorage,
+	getDatePart,
 	getCurrentDateString,
 	getCurrentTimestamp,
 	getTodayLocal,
 	createUTCDateFromLocalCalendarDate,
+	parseDateToUTC,
 } from "../utils/dateUtils";
 import { format } from "date-fns";
 import { processFolderTemplate, TaskTemplateData } from "../utils/folderTemplateProcessor";
@@ -205,6 +207,10 @@ export class TaskService {
 		this.taskUpdateService.setAutoArchiveService(service);
 	}
 
+	private normalizeStatusValue(value: unknown): string {
+		return typeof value === "boolean" ? (value ? "true" : "false") : String(value);
+	}
+
 	/**
 	 * Process a folder path template with task and date variables
 	 *
@@ -361,13 +367,16 @@ export class TaskService {
 		const defaults = this.plugin.settings.taskCreationDefaults;
 		const result = { ...taskData };
 
-		// Apply default due date if not provided
-		if (!result.due && defaults.defaultDueDate !== "none") {
+		// Apply default due date if not provided.
+		// Use === undefined (not !result.due) so that an explicit null from the API
+		// is treated as "clear this field" rather than "apply the default".
+		if (result.due === undefined && defaults.defaultDueDate !== "none") {
 			result.due = calculateDefaultDate(defaults.defaultDueDate);
 		}
 
-		// Apply default scheduled date if not provided
-		if (!result.scheduled && defaults.defaultScheduledDate !== "none") {
+		// Apply default scheduled date if not provided.
+		// Same null-vs-undefined distinction as due above.
+		if (result.scheduled === undefined && defaults.defaultScheduledDate !== "none") {
 			result.scheduled = calculateDefaultDate(defaults.defaultScheduledDate);
 		}
 
@@ -489,12 +498,13 @@ export class TaskService {
 
 			// Step 1: Construct new state in memory using fresh data
 			const updatedTask = { ...freshTask } as Record<string, any>;
-			updatedTask[property] = value;
+			const normalizedValue = property === "status" ? this.normalizeStatusValue(value) : value;
+			updatedTask[property] = normalizedValue;
 			updatedTask.dateModified = getCurrentTimestamp();
 
 			// Handle derivative changes for status updates
 			if (property === "status" && !freshTask.recurrence) {
-				if (this.plugin.statusManager.isCompletedStatus(value)) {
+				if (this.plugin.statusManager.isCompletedStatus(normalizedValue)) {
 					updatedTask.completedDate = getCurrentDateString();
 				} else {
 					updatedTask.completedDate = undefined;
@@ -510,19 +520,23 @@ export class TaskService {
 
 				if (property === "status") {
 					// Coerce boolean-like status strings to actual booleans for compatibility with Obsidian checkbox properties
-					const lower = String(value).toLowerCase();
+					const lower = String(normalizedValue).toLowerCase();
 					const coercedValue =
-						lower === "true" || lower === "false" ? lower === "true" : value;
+						lower === "true" || lower === "false" ? lower === "true" : normalizedValue;
 					frontmatter[fieldName] = coercedValue;
 
 					// Update completed date when marking as complete (non-recurring tasks only)
 					// FIX: Use freshTask instead of stale task to check recurrence
-					this.updateCompletedDateInFrontmatter(frontmatter, value, !!freshTask.recurrence);
+					this.updateCompletedDateInFrontmatter(
+						frontmatter,
+						normalizedValue,
+						!!freshTask.recurrence
+					);
 				} else if ((property === "due" || property === "scheduled") && !value) {
 					// Remove empty due/scheduled dates
 					delete frontmatter[fieldName];
 				} else {
-					frontmatter[fieldName] = value;
+					frontmatter[fieldName] = normalizedValue;
 				}
 
 				// Always update the modification timestamp using field mapper
@@ -532,7 +546,7 @@ export class TaskService {
 
 			// Step 3: Run post-write side effects (cache, events, webhooks, calendar, auto-archive)
 			await this.applyPropertyChangeSideEffects(
-				file, task, updatedTask as TaskInfo, property, task[property], value
+				file, task, updatedTask as TaskInfo, property, task[property], normalizedValue
 			);
 
 			// Step 4: Return authoritative data
@@ -1275,6 +1289,28 @@ export class TaskService {
 	/**
 	 * Toggle completion status for recurring tasks on a specific date
 	 */
+	async resolveRecurringTaskActionDate(task: TaskInfo, date?: Date): Promise<Date> {
+		if (date) {
+			return date;
+		}
+
+		const freshTask = (await this.plugin.cacheManager.getTaskInfo(task.path)) || task;
+		return this.getRecurringTaskActionDate(freshTask);
+	}
+
+	private getRecurringTaskActionDate(task: TaskInfo, date?: Date): Date {
+		if (date) {
+			return date;
+		}
+
+		if (task.recurrence_anchor !== "completion" && task.scheduled) {
+			return parseDateToUTC(getDatePart(task.scheduled));
+		}
+
+		const todayLocal = getTodayLocal();
+		return createUTCDateFromLocalCalendarDate(todayLocal);
+	}
+
 	async toggleRecurringTaskComplete(task: TaskInfo, date?: Date): Promise<TaskInfo> {
 		const file = this.plugin.app.vault.getAbstractFileByPath(task.path);
 		if (!(file instanceof TFile)) {
@@ -1288,14 +1324,7 @@ export class TaskService {
 			throw new Error("Task is not recurring");
 		}
 
-		// Default to local today instead of selectedDate for recurring task completion
-		// This ensures completion is recorded for user's actual calendar day unless explicitly overridden
-		const targetDate =
-			date ||
-			(() => {
-				const todayLocal = getTodayLocal();
-				return createUTCDateFromLocalCalendarDate(todayLocal);
-			})();
+		const targetDate = this.getRecurringTaskActionDate(freshTask, date);
 		const dateStr = formatDateForStorage(targetDate);
 
 		// Check current completion status for this date using fresh data
@@ -1514,13 +1543,7 @@ export class TaskService {
 			throw new Error("Task is not recurring");
 		}
 
-		// Default to local today
-		const targetDate =
-			date ||
-			(() => {
-				const todayLocal = getTodayLocal();
-				return createUTCDateFromLocalCalendarDate(todayLocal);
-			})();
+		const targetDate = this.getRecurringTaskActionDate(freshTask, date);
 		const dateStr = formatDateForStorage(targetDate);
 
 		// Check current skip status for this date

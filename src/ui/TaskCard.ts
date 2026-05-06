@@ -37,6 +37,8 @@ import {
 import { DEFAULT_INTERNAL_VISIBLE_PROPERTIES } from "../settings/defaults";
 import {
 	extractBasesValue,
+	isEmptyCardDisplayValue,
+	renderBasesValue,
 	resolveTaskCardPropertyLabel,
 	type TaskCardPresentationOptions,
 } from "./taskCardPresentation";
@@ -61,6 +63,8 @@ export interface TaskCardOptions {
 	propertyLabels?: TaskCardPresentationOptions["propertyLabels"];
 	/** How expanded subtasks/dependencies should interact with the current view filter. */
 	expandedRelationshipFilterMode?: "inherit" | "show-all";
+	/** Optional live resolver for the current expanded relationship filter mode. */
+	resolveExpandedRelationshipFilterMode?: () => "inherit" | "show-all";
 	/** Paths visible in the current view after Bases/search filtering. */
 	expandedRelationshipTaskPaths?: ReadonlySet<string>;
 }
@@ -75,12 +79,40 @@ function getStoredTaskCardOptions(card: HTMLElement): Partial<TaskCardOptions> {
 	return ((card as any)._taskCardOptions ?? {}) as Partial<TaskCardOptions>;
 }
 
+function parseExpandedRelationshipFilterMode(
+	value: unknown
+): "inherit" | "show-all" {
+	if (typeof value === "number") {
+		return value === 1 ? "show-all" : "inherit";
+	}
+
+	const normalized = String(value ?? "")
+		.trim()
+		.toLowerCase()
+		.replace(/^['"]|['"]$/g, "")
+		.replace(/[_\s]+/g, "-");
+
+	if (normalized === "show-all" || normalized === "1") {
+		return "show-all";
+	}
+
+	if (normalized === "inherit" || normalized === "0") {
+		return "inherit";
+	}
+
+	return "inherit";
+}
+
 function filterExpandedRelationshipTasks(
 	card: HTMLElement,
 	tasks: TaskInfo[]
 ): TaskInfo[] {
 	const options = getStoredTaskCardOptions(card);
-	if (options.expandedRelationshipFilterMode !== "inherit") {
+	const filterMode = parseExpandedRelationshipFilterMode(
+		options.resolveExpandedRelationshipFilterMode?.()
+			?? options.expandedRelationshipFilterMode
+	);
+	if (filterMode !== "inherit") {
 		return tasks;
 	}
 
@@ -905,12 +937,7 @@ function renderPropertyMetadata(
  * Check if a value is valid for display
  */
 function hasValidValue(value: any): boolean {
-	return (
-		value !== null &&
-		value !== undefined &&
-		!(Array.isArray(value) && value.length === 0) &&
-		!(typeof value === "string" && value.trim() === "")
-	);
+	return !isEmptyCardDisplayValue(value);
 }
 
 
@@ -937,7 +964,9 @@ function renderUserProperty(
 	element.createEl("span", { text: `${fieldName}: ` });
 
 	// Create value container
-	const valueContainer = element.createEl("span");
+	const valueContainer = element.createEl("span", {
+		cls: "task-card__metadata-value",
+	});
 
 	// Create shared services to avoid redundant object creation
 	const linkServices: LinkServices = {
@@ -963,7 +992,7 @@ function renderUserProperty(
 		}
 	} else if (userField.type === "list" && Array.isArray(value)) {
 		// Handle list fields - avoid recursive renderPropertyValue call to prevent stack overflow
-		const validItems = value.filter((item) => item !== null && item !== undefined);
+		const validItems = value.map((item) => extractBasesValue(item)).filter(hasValidValue);
 		validItems.forEach((item, idx) => {
 			if (idx > 0) valueContainer.appendChild(document.createTextNode(", "));
 
@@ -1021,14 +1050,16 @@ function renderGenericProperty(
 	element.createEl("span", { text: `${displayName}: ` });
 
 	// Create value container
-	const valueContainer = element.createEl("span");
+	const valueContainer = element.createEl("span", {
+		cls: "task-card__metadata-value",
+	});
 
 	if (Array.isArray(value)) {
 		// Handle arrays - render each item separately to detect links
 		// Extract Bases values from array items as they may be wrapped objects
 		const filtered = value
 			.map((v) => extractBasesValue(v))
-			.filter((v) => v !== null && v !== undefined && v !== "");
+			.filter(hasValidValue);
 		filtered.forEach((item, idx) => {
 			if (idx > 0) valueContainer.appendChild(document.createTextNode(", "));
 			renderPropertyValue(valueContainer, item, plugin);
@@ -1046,6 +1077,14 @@ function renderPropertyValue(
 	value: unknown,
 	plugin?: TaskNotesPlugin
 ): void {
+	if (!hasValidValue(value)) {
+		return;
+	}
+
+	if (plugin && renderBasesValue(container, value, plugin.app.renderContext)) {
+		return;
+	}
+
 	if (typeof value === "string" && plugin) {
 		// Check if string contains links and render appropriately
 		const linkServices: LinkServices = {

@@ -748,7 +748,10 @@ export class TaskCreationModal extends TaskModal {
 					// Vim mode will handle its own ESC to exit insert mode
 					this.close();
 				},
-				onTab: () => {
+				onTab: (shift) => {
+					if (shift) {
+						return false;
+					}
 					// Tab - jump to title input (expand form if needed)
 					if (!this.isExpanded) {
 						this.expandModal();
@@ -1046,7 +1049,7 @@ export class TaskCreationModal extends TaskModal {
 
 		// Handle projects differently - they use file selection, not text input
 		if (parsed.projects && parsed.projects.length > 0) {
-			this.initializeProjectsFromStrings(parsed.projects);
+			this.addProjectsFromStrings(parsed.projects);
 			this.renderProjectsList();
 		}
 

@@ -55,6 +55,12 @@ interface ProjectItem {
 export abstract class TaskModal extends Modal {
 	plugin: TaskNotesPlugin;
 	private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
+	private guardedTitleInputs = new WeakSet<HTMLInputElement>();
+	private pendingTitleFocusScrollPositions: Array<{
+		element: HTMLElement;
+		scrollTop: number;
+		scrollLeft: number;
+	}> | null = null;
 
 	// Dependency item definition
 	protected createDependencyItemFromFile(
@@ -615,6 +621,7 @@ export abstract class TaskModal extends Modal {
 		this.titleInput.addEventListener("input", (e) => {
 			this.title = (e.target as HTMLInputElement).value;
 		});
+		this.attachTitleFocusScrollGuard(this.titleInput);
 	}
 
 	protected createActionBar(container: HTMLElement): void {
@@ -772,6 +779,7 @@ export abstract class TaskModal extends Modal {
 			titleInputDetailed.addEventListener("input", (e) => {
 				this.title = (e.target as HTMLInputElement).value;
 			});
+			this.attachTitleFocusScrollGuard(titleInputDetailed);
 
 			// Store reference for modals that use this as their title input
 			if ((isEditModal || isCreationWithNLP) && !this.titleInput) {
@@ -805,10 +813,12 @@ export abstract class TaskModal extends Modal {
 					// ESC - close the modal
 					this.close();
 				},
-				onTab: () => {
-					// Tab - jump to next input field
-					this.focusNextField();
-					return true; // Prevent default tab behavior
+				onTab: (shift) => {
+					if (!this.plugin.settings.taskModalTabMovesFocus) {
+						return false;
+					}
+
+					return shift ? this.focusPreviousField() : this.focusNextField();
 				},
 			});
 		}
@@ -1649,23 +1659,116 @@ export abstract class TaskModal extends Modal {
 
 	protected focusTitleInput(): void {
 		setTimeout(() => {
-			this.titleInput.focus();
+			this.pendingTitleFocusScrollPositions = this.captureTitleFocusScrollPositions(this.titleInput);
+			this.titleInput.focus({ preventScroll: true });
 			this.titleInput.select();
+			this.restoreTitleFocusScrollPositions(this.pendingTitleFocusScrollPositions);
 		}, 100);
 	}
 
-	protected addProject(file: TAbstractFile): void {
-		// Avoid duplicates
-		if (this.selectedProjectItems.some((existing) => existing.file?.path === file.path)) {
-			return;
+	private shouldPreserveTitleFocusScroll(): boolean {
+		const doc = this.containerEl.ownerDocument;
+		const win = doc.defaultView || window;
+		return doc.body.classList.contains("is-mobile") || win.matchMedia?.("(pointer: coarse)")?.matches === true;
+	}
+
+	private attachTitleFocusScrollGuard(input: HTMLInputElement): void {
+		if (this.guardedTitleInputs.has(input)) return;
+		this.guardedTitleInputs.add(input);
+
+		const capture = () => {
+			this.pendingTitleFocusScrollPositions = this.captureTitleFocusScrollPositions(input);
+		};
+
+		input.addEventListener("pointerdown", capture, { capture: true });
+		input.addEventListener("touchstart", capture, { capture: true });
+		input.addEventListener("focus", () => {
+			if (!this.pendingTitleFocusScrollPositions) return;
+			this.scheduleTitleFocusScrollRestore(this.pendingTitleFocusScrollPositions);
+		});
+	}
+
+	private captureTitleFocusScrollPositions(input: HTMLInputElement): Array<{
+		element: HTMLElement;
+		scrollTop: number;
+		scrollLeft: number;
+	}> | null {
+		if (!this.shouldPreserveTitleFocusScroll()) {
+			return null;
 		}
 
+		const elements = new Set<HTMLElement>();
+		const addElement = (element: Element | null | undefined) => {
+			const elementWindow = element?.ownerDocument.defaultView;
+			const HTMLElementConstructor = elementWindow?.HTMLElement ?? HTMLElement;
+			if (element instanceof HTMLElementConstructor) {
+				elements.add(element);
+			}
+		};
+
+		addElement(this.containerEl);
+		addElement(this.modalEl);
+		addElement(this.contentEl);
+		this.modalEl
+			.querySelectorAll<HTMLElement>(
+				".modal-content, .minimalist-modal-container, .modal-split-content, .modal-split-left, .modal-split-right, .details-container"
+			)
+			.forEach(addElement);
+
+		let parent = input.parentElement;
+		while (parent && parent !== this.containerEl.parentElement) {
+			addElement(parent);
+			parent = parent.parentElement;
+		}
+
+		return Array.from(elements).map((element) => ({
+			element,
+			scrollTop: element.scrollTop,
+			scrollLeft: element.scrollLeft,
+		}));
+	}
+
+	private restoreTitleFocusScrollPositions(
+		positions: Array<{ element: HTMLElement; scrollTop: number; scrollLeft: number }> | null
+	): void {
+		if (!positions) return;
+		for (const { element, scrollTop, scrollLeft } of positions) {
+			element.scrollTop = scrollTop;
+			element.scrollLeft = scrollLeft;
+		}
+	}
+
+	private scheduleTitleFocusScrollRestore(
+		positions: Array<{ element: HTMLElement; scrollTop: number; scrollLeft: number }>
+	): void {
+		this.restoreTitleFocusScrollPositions(positions);
+
+		const win = this.containerEl.ownerDocument.defaultView || window;
+		const requestAnimationFrame =
+			win.requestAnimationFrame ?? ((callback: FrameRequestCallback) => win.setTimeout(callback, 16));
+		requestAnimationFrame(() => this.restoreTitleFocusScrollPositions(positions));
+		win.setTimeout(() => this.restoreTitleFocusScrollPositions(positions), 50);
+		win.setTimeout(() => {
+			this.restoreTitleFocusScrollPositions(positions);
+			if (this.pendingTitleFocusScrollPositions === positions) {
+				this.pendingTitleFocusScrollPositions = null;
+			}
+		}, 250);
+	}
+
+	protected addProject(file: TAbstractFile): void {
 		if (file instanceof TFile) {
-			this.selectedProjectItems.push({
+			const projectItem = {
 				file,
 				name: file.basename,
 				link: this.buildProjectReference(file, this.getCurrentTaskPath() || ""),
-			});
+			};
+
+			if (this.hasProjectItem(projectItem)) {
+				return;
+			}
+
+			this.selectedProjectItems.push(projectItem);
 		}
 		this.updateProjectsFromFiles();
 		this.renderProjectsList();
@@ -1696,91 +1799,133 @@ export abstract class TaskModal extends Modal {
 	}
 
 	protected initializeProjectsFromStrings(projects: string[]): void {
-		// Convert project string to ProjectItem objects
-		// This handles both old plain string projects and new [[link]] format
 		this.selectedProjectItems = [];
+		this.addProjectsFromStrings(projects);
+		// Don't render immediately - let the caller decide when to render
+	}
+
+	protected addProjectsFromStrings(projects: string[]): void {
+		// Convert project strings to ProjectItem objects.
+		// This handles both old plain string projects and new [[link]] format.
 
 		// Use the task's path as the source for resolving relative links
 		const sourcePath = this.getCurrentTaskPath() || "";
 
 		for (const projectString of projects) {
-			// Skip null, undefined, or empty strings
-			if (
-				!projectString ||
-				typeof projectString !== "string" ||
-				projectString.trim() === ""
-			) {
-				continue;
-			}
-
-			// Check if it's a wiki link format
-			const linkMatch = projectString.match(/^\[\[([^\]]+)\]\]$/);
-			if (linkMatch) {
-				const linkPath = linkMatch[1];
-				const file = this.resolveLink(linkPath, sourcePath);
-				if (file) {
-					// Resolved link
-					this.selectedProjectItems.push({
-						file,
-						name: file.basename,
-						link: projectString,
-					});
-				} else {
-					// Unresolved link - still add it!
-					const displayName = linkPath.split("|")[0]; // Strip alias if present
-					this.selectedProjectItems.push({
-						name: displayName,
-						link: projectString,
-						unresolved: true,
-					});
-				}
-			} else {
-				// Check if it's a markdown link format [text](path)
-				const markdownMatch = projectString.match(/^\[([^\]]*)\]\(([^)]+)\)$/);
-				if (markdownMatch) {
-					const linkPath = parseLinkToPath(projectString);
-					const file = this.resolveLink(linkPath, sourcePath);
-					if (file) {
-						// Resolved markdown link
-						this.selectedProjectItems.push({
-							file,
-							name: file.basename,
-							link: projectString,
-						});
-					} else {
-						// Unresolved markdown link
-						const displayName = markdownMatch[1] || linkPath;
-						this.selectedProjectItems.push({
-							name: displayName,
-							link: projectString,
-							unresolved: true,
-						});
-					}
-				} else {
-					// For backwards compatibility, try to find a file with this name
-					const files = this.getMarkdownFiles();
-					const matchingFile = files.find(
-						(f) => f.basename === projectString || f.name === projectString + ".md"
-					);
-					if (matchingFile) {
-						this.selectedProjectItems.push({
-							file: matchingFile,
-							name: matchingFile.basename,
-							link: `[[${matchingFile.basename}]]`,
-						});
-					} else {
-						// Plain text - preserve as-is
-						this.selectedProjectItems.push({
-							name: projectString,
-							link: projectString,
-							unresolved: true,
-						});
-					}
-				}
-			}
+			const projectItem = this.createProjectItemFromString(projectString, sourcePath);
+			if (!projectItem || this.hasProjectItem(projectItem)) continue;
+			this.selectedProjectItems.push(projectItem);
 		}
 		this.updateProjectsFromFiles();
 		// Don't render immediately - let the caller decide when to render
+	}
+
+	private createProjectItemFromString(projectString: string, sourcePath: string): ProjectItem | null {
+		// Skip null, undefined, or empty strings
+		if (
+			!projectString ||
+			typeof projectString !== "string" ||
+			projectString.trim() === ""
+		) {
+			return null;
+		}
+
+		// Check if it's a wiki link format
+		const linkMatch = projectString.match(/^\[\[([^\]]+)\]\]$/);
+		if (linkMatch) {
+			const linkPath = linkMatch[1];
+			const file = this.resolveLink(linkPath, sourcePath);
+			if (file) {
+				// Resolved link
+				return {
+					file,
+					name: file.basename,
+					link: projectString,
+				};
+			} else {
+				// Unresolved link - still add it!
+				const displayName = linkPath.split("|")[0]; // Strip alias if present
+				return {
+					name: displayName,
+					link: projectString,
+					unresolved: true,
+				};
+			}
+		} else {
+			// Check if it's a markdown link format [text](path)
+			const markdownMatch = projectString.match(/^\[([^\]]*)\]\(([^)]+)\)$/);
+			if (markdownMatch) {
+				const linkPath = parseLinkToPath(projectString);
+				const file = this.resolveLink(linkPath, sourcePath);
+				if (file) {
+					// Resolved markdown link
+					return {
+						file,
+						name: file.basename,
+						link: projectString,
+					};
+				} else {
+					// Unresolved markdown link
+					const displayName = markdownMatch[1] || linkPath;
+					return {
+						name: displayName,
+						link: projectString,
+						unresolved: true,
+					};
+				}
+			} else {
+				// For backwards compatibility, try to find a file with this name
+				const files = this.getMarkdownFiles();
+				const matchingFile = files.find(
+					(f) => f.basename === projectString || f.name === projectString + ".md"
+				);
+				if (matchingFile) {
+					return {
+						file: matchingFile,
+						name: matchingFile.basename,
+						link: `[[${matchingFile.basename}]]`,
+					};
+				} else {
+					// Plain text - preserve as-is
+					return {
+						name: projectString,
+						link: projectString,
+						unresolved: true,
+					};
+				}
+			}
+		}
+	}
+
+	private hasProjectItem(candidate: ProjectItem): boolean {
+		const candidateKeys = this.getProjectDedupKeys(candidate);
+		return this.selectedProjectItems.some((existing) => {
+			const existingKeys = this.getProjectDedupKeys(existing);
+			return candidateKeys.some((key) => existingKeys.includes(key));
+		});
+	}
+
+	private getProjectDedupKeys(item: ProjectItem): string[] {
+		const keys = new Set<string>();
+
+		if (item.file?.path) {
+			keys.add(`path:${this.normalizeProjectPath(item.file.path)}`);
+		}
+
+		const parsedPath = parseLinkToPath(item.link);
+		if (parsedPath) {
+			keys.add(`path:${this.normalizeProjectPath(parsedPath)}`);
+		}
+
+		if (item.link) {
+			keys.add(`link:${item.link.trim().toLowerCase()}`);
+		}
+
+		return Array.from(keys);
+	}
+
+	private normalizeProjectPath(path: string): string {
+		return path.trim().replace(/\.md$/i, "").toLowerCase();
 	}
 
 	protected renderProjectsList(): void {
@@ -1981,17 +2126,28 @@ export abstract class TaskModal extends Modal {
 		return this.title.trim().length > 0;
 	}
 
-	protected focusNextField(): void {
+	protected focusNextField(): boolean {
 		// Try to focus the contexts input as the next field after details
+		const nextField = this.contextsInput || this.tagsInput || this.timeEstimateInput;
+		if (!nextField) {
+			return false;
+		}
+
 		setTimeout(() => {
-			if (this.contextsInput) {
-				this.contextsInput.focus();
-			} else if (this.tagsInput) {
-				this.tagsInput.focus();
-			} else if (this.timeEstimateInput) {
-				this.timeEstimateInput.focus();
-			}
+			nextField.focus();
 		}, 50);
+		return true;
+	}
+
+	protected focusPreviousField(): boolean {
+		if (!this.titleInput) {
+			return false;
+		}
+
+		setTimeout(() => {
+			this.titleInput?.focus();
+		}, 50);
+		return true;
 	}
 
 	onClose(): void {
