@@ -424,20 +424,23 @@ export default class TaskNotesPlugin extends Plugin {
 
 			if (releaseNotesUpdateState.hasVersionChange) {
 				const showReleaseNotes = this.settings.showReleaseNotesOnUpdate ?? true;
-				if (showReleaseNotes && releaseNotesUpdateState.shouldShowReleaseNotes) {
+				const shouldOpenReleaseNotes =
+					showReleaseNotes && releaseNotesUpdateState.shouldShowReleaseNotes;
+
+				// Persist the seen marker before opening the release notes view. If view activation
+				// fails or triggers a reload, the plugin should not reopen notes on every startup.
+				this.settings.lastSeenVersion = releaseNotesUpdateState.nextLastSeenVersion;
+				this.settings.lastSeenReleaseNotesVersion =
+					releaseNotesUpdateState.nextLastSeenReleaseNotesVersion;
+				await this.saveSettingsDataOnly();
+
+				if (shouldOpenReleaseNotes) {
 					// Show release notes after a delay to ensure UI is ready
-					setTimeout(async () => {
-						await this.activateReleaseNotesView();
-						this.settings.lastSeenVersion = releaseNotesUpdateState.nextLastSeenVersion;
-						this.settings.lastSeenReleaseNotesVersion =
-							releaseNotesUpdateState.nextLastSeenReleaseNotesVersion;
-						await this.saveSettings();
+					setTimeout(() => {
+						void this.activateReleaseNotesView().catch((error) => {
+							console.error("Failed to open release notes after update:", error);
+						});
 					}, 1500); // Slightly longer delay than migration to avoid conflicts
-				} else {
-					this.settings.lastSeenVersion = releaseNotesUpdateState.nextLastSeenVersion;
-					this.settings.lastSeenReleaseNotesVersion =
-						releaseNotesUpdateState.nextLastSeenReleaseNotesVersion;
-					await this.saveSettings();
 				}
 			}
 
