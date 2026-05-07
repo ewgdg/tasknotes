@@ -7,7 +7,7 @@ export type PomodoroLocalStateSnapshot = {
 	lastSelectedTaskPath?: string;
 };
 
-export const POMODORO_LOCAL_STORAGE_KEY = "tasknotes-fork-pomodoro-local-state";
+export const POMODORO_LOCAL_STORAGE_KEY = "tasknotes-pomodoro-local-state";
 
 type LocalStorageApp = Pick<App, "loadLocalStorage" | "saveLocalStorage">;
 
