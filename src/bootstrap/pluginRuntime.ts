@@ -1,4 +1,5 @@
 import type TaskNotesPlugin from "../main";
+import type { EventRef } from "obsidian";
 import { TaskNotesSettingTab } from "../settings/TaskNotesSettingTab";
 import { perfMonitor } from "../utils/PerformanceMonitor";
 import { registerCliHandlers } from "../cli/registerCliHandlers";
@@ -64,8 +65,8 @@ export async function cleanupPluginRuntime(plugin: TaskNotesPlugin): Promise<voi
 	plugin.autoExportService?.destroy();
 	plugin.taskLinkDetectionService?.cleanup();
 	plugin.dragDropManager?.destroy();
-	plugin.apiService?.stop();
-	plugin.oauthService?.destroy();
+	void plugin.apiService?.stop();
+	void plugin.oauthService?.destroy();
 	plugin.taskCalendarSyncService?.destroy();
 	plugin.googleCalendarService?.destroy();
 	plugin.microsoftCalendarService?.destroy();
@@ -73,6 +74,7 @@ export async function cleanupPluginRuntime(plugin: TaskNotesPlugin): Promise<voi
 	plugin.viewStateManager?.cleanup();
 	plugin.statusBarService?.destroy();
 	plugin.notificationService?.destroy();
+	plugin.projectSubtasksService?.destroy();
 	plugin.cacheManager?.destroy();
 	plugin.dependencyCache?.destroy();
 	plugin.requestDeduplicator?.cancelAll();
@@ -85,7 +87,7 @@ export async function cleanupPluginRuntime(plugin: TaskNotesPlugin): Promise<voi
 	}
 
 	if (plugin.taskUpdateListenerForEditor) {
-		plugin.emitter.offref(plugin.taskUpdateListenerForEditor);
+		plugin.emitter.offref(plugin.taskUpdateListenerForEditor as EventRef);
 	}
 
 	plugin.initializationComplete = false;

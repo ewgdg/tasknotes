@@ -1,9 +1,37 @@
-import { Menu, Notice } from "obsidian";
+import { Menu, Notice, TFile, type MenuItem } from "obsidian";
 import TaskNotesPlugin from "../main";
 import { TaskInfo } from "../types";
-import { DateContextMenu } from "./DateContextMenu";
+import { DateContextMenu, type DateOption } from "./DateContextMenu";
 import { ContextMenu } from "./ContextMenu";
 import { showConfirmationModal } from "../modals/ConfirmationModal";
+import { showTextInputModal } from "../modals/TextInputModal";
+import { TagSuggest } from "../modals/taskModalSuggests";
+import {
+	formatTasksForClipboard,
+	type ClipboardTask,
+	type TaskCopyFormat,
+} from "../utils/taskClipboard";
+import {
+	addTagsToList,
+	clearEditableTagsFromList,
+	parseTaskTagInput,
+	removeTagsFromList,
+} from "../utils/taskTagList";
+
+type SubmenuMenuItem = {
+	setSubmenu(): Menu;
+	dom?: HTMLElement;
+	domEl?: HTMLElement;
+};
+
+function getSubmenu(item: MenuItem): Menu {
+	return (item as unknown as SubmenuMenuItem).setSubmenu();
+}
+
+function getMenuItemElement(item: MenuItem): HTMLElement | null {
+	const menuItem = item as unknown as SubmenuMenuItem;
+	return menuItem.dom ?? menuItem.domEl ?? null;
+}
 
 export interface BatchContextMenuOptions {
 	plugin: TaskNotesPlugin;
@@ -29,7 +57,7 @@ export class BatchContextMenu {
 	}
 
 	private buildMenu(): void {
-		const { plugin, selectedPaths } = this.options;
+		const { selectedPaths } = this.options;
 		const count = selectedPaths.length;
 
 		// Header showing selection count
@@ -46,7 +74,7 @@ export class BatchContextMenu {
 			item.setTitle(this.t("contextMenus.task.status"));
 			item.setIcon("circle");
 
-			const submenu = (item as any).setSubmenu();
+			const submenu = getSubmenu(item);
 			this.addStatusOptions(submenu);
 		});
 
@@ -55,8 +83,16 @@ export class BatchContextMenu {
 			item.setTitle(this.t("contextMenus.task.priority"));
 			item.setIcon("star");
 
-			const submenu = (item as any).setSubmenu();
+			const submenu = getSubmenu(item);
 			this.addPriorityOptions(submenu);
+		});
+
+		this.menu.addItem((item) => {
+			item.setTitle(this.t("contextMenus.task.tags"));
+			item.setIcon("tags");
+
+			const submenu = getSubmenu(item);
+			this.addTagOptions(submenu);
 		});
 
 		this.menu.addSeparator();
@@ -66,7 +102,7 @@ export class BatchContextMenu {
 			item.setTitle(this.t("contextMenus.task.dueDate"));
 			item.setIcon("calendar");
 
-			const submenu = (item as any).setSubmenu();
+			const submenu = getSubmenu(item);
 			this.addDateOptions(submenu, "due");
 		});
 
@@ -75,7 +111,7 @@ export class BatchContextMenu {
 			item.setTitle(this.t("contextMenus.task.scheduledDate"));
 			item.setIcon("calendar-clock");
 
-			const submenu = (item as any).setSubmenu();
+			const submenu = getSubmenu(item);
 			this.addDateOptions(submenu, "scheduled");
 		});
 
@@ -96,6 +132,17 @@ export class BatchContextMenu {
 			item.onClick(async () => {
 				await this.batchArchive(false);
 			});
+		});
+
+		this.menu.addSeparator();
+
+		// Copy selected tasks
+		this.menu.addItem((item) => {
+			item.setTitle("Copy selected tasks");
+			item.setIcon("copy");
+
+			const submenu = getSubmenu(item);
+			this.addCopyOptions(submenu);
 		});
 
 		this.menu.addSeparator();
@@ -122,12 +169,60 @@ export class BatchContextMenu {
 		});
 	}
 
+	private addTagOptions(submenu: Menu): void {
+		submenu.addItem((item) => {
+			item.setTitle(this.t("contextMenus.task.addTag"));
+			item.setIcon("plus");
+			item.onClick(() => {
+				void this.openBatchTagInput("add");
+			});
+		});
+
+		submenu.addItem((item) => {
+			item.setTitle(this.t("contextMenus.task.removeTagInput"));
+			item.setIcon("x");
+			item.onClick(() => {
+				void this.openBatchTagInput("remove");
+			});
+		});
+
+		submenu.addSeparator();
+		submenu.addItem((item) => {
+			item.setTitle(this.t("contextMenus.task.clearTags"));
+			item.setIcon("eraser");
+			item.onClick(async () => {
+				await this.batchUpdateTags((task) =>
+					clearEditableTagsFromList(task.tags, this.options.plugin.settings)
+				);
+			});
+		});
+	}
+
+	private addCopyOptions(submenu: Menu): void {
+		const options: Array<{ title: string; icon: string; format: TaskCopyFormat }> = [
+			{ title: "Copy filenames", icon: "file-text", format: "filenames" },
+			{ title: "Copy Markdown links", icon: "link", format: "markdown-links" },
+			{ title: "Copy titles", icon: "text", format: "titles" },
+			{ title: "Copy paths", icon: "copy", format: "paths" },
+		];
+
+		for (const option of options) {
+			submenu.addItem((item) => {
+				item.setTitle(option.title);
+				item.setIcon(option.icon);
+				item.onClick(async () => {
+					await this.copySelectedTasks(option.format);
+				});
+			});
+		}
+	}
+
 	private addStatusOptions(submenu: Menu): void {
 		const statusConfigs = this.options.plugin.settings.customStatuses;
 		const sortedStatuses = [...statusConfigs].sort((a, b) => a.order - b.order);
 
 		for (const status of sortedStatuses) {
-			submenu.addItem((item: any) => {
+			submenu.addItem((item) => {
 				item.setTitle(status.label);
 				// Use custom icon if configured, otherwise default to circle
 				item.setIcon(status.icon || "circle");
@@ -137,8 +232,8 @@ export class BatchContextMenu {
 
 				// Apply color to icon
 				if (status.color) {
-					setTimeout(() => {
-						const itemEl = item.dom || item.domEl;
+					window.setTimeout(() => {
+						const itemEl = getMenuItemElement(item);
 						if (itemEl) {
 							const iconEl = itemEl.querySelector(".menu-item-icon");
 							if (iconEl) {
@@ -155,7 +250,7 @@ export class BatchContextMenu {
 		const priorityOptions = this.options.plugin.priorityManager.getPrioritiesByWeight();
 
 		for (const priority of priorityOptions) {
-			submenu.addItem((item: any) => {
+			submenu.addItem((item) => {
 				item.setTitle(priority.label);
 				item.setIcon("star");
 				item.onClick(async () => {
@@ -164,8 +259,8 @@ export class BatchContextMenu {
 
 				// Apply color to icon
 				if (priority.color) {
-					setTimeout(() => {
-						const itemEl = item.dom || item.domEl;
+					window.setTimeout(() => {
+						const itemEl = getMenuItemElement(item);
 						if (itemEl) {
 							const iconEl = itemEl.querySelector(".menu-item-icon");
 							if (iconEl) {
@@ -179,7 +274,7 @@ export class BatchContextMenu {
 
 		// Add option to clear priority
 		submenu.addSeparator();
-		submenu.addItem((item: any) => {
+		submenu.addItem((item) => {
 			item.setTitle(this.t("contextMenus.priority.clearPriority"));
 			item.setIcon("x");
 			item.onClick(async () => {
@@ -199,9 +294,11 @@ export class BatchContextMenu {
 		const dateOptions = dateContextMenu.getDateOptions();
 
 		// Basic date options only (skip increment options as they don't work correctly for batch)
-		const basicOptions = dateOptions.filter((option: any) => option.category === "basic");
+		const basicOptions = dateOptions.filter(
+			(option: DateOption) => option.category === "basic"
+		);
 		for (const option of basicOptions) {
-			submenu.addItem((item: any) => {
+			submenu.addItem((item) => {
 				if (option.icon) item.setIcon(option.icon);
 				item.setTitle(option.label);
 				item.onClick(async () => {
@@ -212,7 +309,7 @@ export class BatchContextMenu {
 
 		// Clear date option
 		submenu.addSeparator();
-		submenu.addItem((item: any) => {
+		submenu.addItem((item) => {
 			item.setTitle(this.t("contextMenus.date.clearDate"));
 			item.setIcon("x");
 			item.onClick(async () => {
@@ -221,7 +318,100 @@ export class BatchContextMenu {
 		});
 	}
 
-	private async batchUpdateProperty(property: keyof TaskInfo, value: any): Promise<void> {
+	private async openBatchTagInput(mode: "add" | "remove"): Promise<void> {
+		const { plugin } = this.options;
+		const input = await showTextInputModal(plugin.app, {
+			title:
+				mode === "add"
+					? this.t("contextMenus.task.addTag")
+					: this.t("contextMenus.task.removeTagInput"),
+			placeholder: this.t("contextMenus.task.tagPlaceholder"),
+			confirmText: this.t("common.confirm"),
+			cancelText: this.t("common.cancel"),
+			onInputReady: (inputEl) => {
+				new TagSuggest(plugin.app, inputEl, plugin);
+			},
+		});
+
+		const tags = parseTaskTagInput(input);
+		if (tags.length === 0) return;
+
+		await this.batchUpdateTags((task) =>
+			mode === "add" ? addTagsToList(task.tags, tags) : removeTagsFromList(task.tags, tags)
+		);
+	}
+
+	private async copySelectedTasks(format: TaskCopyFormat): Promise<void> {
+		const { plugin, selectedPaths } = this.options;
+		const tasks: ClipboardTask[] = [];
+
+		for (const path of selectedPaths) {
+			const task = await plugin.cacheManager.getTaskInfo(path);
+			tasks.push({
+				path,
+				title: task?.title,
+			});
+		}
+
+		const text = formatTasksForClipboard(tasks, format, (task) =>
+			this.getMarkdownLinkText(task.path)
+		);
+		await navigator.clipboard.writeText(text);
+		new Notice(`Copied ${tasks.length} tasks`);
+	}
+
+	private getMarkdownLinkText(path: string): string {
+		const file = this.options.plugin.app.vault.getAbstractFileByPath(path);
+		if (file instanceof TFile) {
+			return this.options.plugin.app.metadataCache.fileToLinktext(file, "");
+		}
+		return path;
+	}
+
+	private async batchUpdateTags(
+		getNextTags: (task: TaskInfo) => string[] | undefined
+	): Promise<void> {
+		const { plugin, selectedPaths, onUpdate } = this.options;
+		const count = selectedPaths.length;
+
+		try {
+			new Notice(`Updating tags on ${count} tasks...`);
+
+			let successCount = 0;
+			let failCount = 0;
+
+			for (const path of selectedPaths) {
+				try {
+					const task = await plugin.cacheManager.getTaskInfo(path);
+					if (task) {
+						await plugin.taskService.updateProperty(task, "tags", getNextTags(task));
+						successCount++;
+					} else {
+						failCount++;
+					}
+				} catch (e) {
+					console.error(`[BatchContextMenu] Failed to update tags for ${path}:`, e);
+					failCount++;
+				}
+			}
+
+			if (failCount === 0) {
+				new Notice(`Updated tags on ${successCount} tasks`);
+			} else {
+				new Notice(`Updated tags on ${successCount} tasks, ${failCount} failed`);
+			}
+
+			plugin.taskSelectionService?.clearSelection();
+			plugin.taskSelectionService?.exitSelectionMode();
+
+			onUpdate?.();
+		} catch (error) {
+			console.error("[BatchContextMenu] Batch tag update failed:", error);
+			new Notice(this.t("contextMenus.task.notices.updateTagsFailed"));
+		}
+	}
+
+	private async batchUpdateProperty(property: keyof TaskInfo, value: unknown): Promise<void> {
 		const { plugin, selectedPaths, onUpdate } = this.options;
 		const count = selectedPaths.length;
 
@@ -294,7 +484,9 @@ export class BatchContextMenu {
 			if (failCount === 0) {
 				new Notice(`${archive ? "Archived" : "Unarchived"} ${successCount} tasks`);
 			} else {
-				new Notice(`${archive ? "Archived" : "Unarchived"} ${successCount} tasks, ${failCount} failed`);
+				new Notice(
+					`${archive ? "Archived" : "Unarchived"} ${successCount} tasks, ${failCount} failed`
+				);
 			}
 
 			// Clear selection after successful batch operation
@@ -331,21 +523,9 @@ export class BatchContextMenu {
 
 			for (const path of selectedPaths) {
 				try {
-					const file = plugin.app.vault.getAbstractFileByPath(path);
-					if (file) {
-						// Delete from Google Calendar before trashing file
-						if (plugin.taskCalendarSyncService?.isEnabled()) {
-							const task = await plugin.cacheManager.getTaskInfo(path);
-							if (task?.googleCalendarEventId) {
-								try {
-									await plugin.taskCalendarSyncService
-										.deleteTaskFromCalendarByPath(path, task.googleCalendarEventId);
-								} catch (error) {
-									console.warn("Failed to delete task from Google Calendar:", error);
-								}
-							}
-						}
-						await plugin.app.vault.trash(file, true);
+					const task = await plugin.cacheManager.getTaskInfo(path);
+					if (task) {
+						await plugin.taskService.deleteTask(task);
 						successCount++;
 					} else {
 						failCount++;

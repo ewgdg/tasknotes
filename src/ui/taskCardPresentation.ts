@@ -1,4 +1,5 @@
-import type { RenderContext, Value } from "obsidian";
+import type { RenderContext } from "obsidian";
+import { stringifyUnknown } from "../utils/stringUtils";
 
 export interface TaskCardPresentationOptions {
 	propertyLabels?: Record<string, string>;
@@ -6,17 +7,27 @@ export interface TaskCardPresentationOptions {
 
 const NULLISH_DISPLAY_STRINGS = new Set(["null", "undefined"]);
 
+type RenderableBasesValue = {
+	renderTo(container: HTMLElement, renderContext: RenderContext): void;
+	toString(): string;
+};
+
 function isNullishDisplayString(value: string): boolean {
 	return NULLISH_DISPLAY_STRINGS.has(value.trim().toLowerCase());
 }
 
-export function isBasesValue(value: unknown): value is Value {
+export function isBasesValue(value: unknown): value is RenderableBasesValue {
 	return (
 		typeof value === "object" &&
 		value !== null &&
 		typeof (value as { renderTo?: unknown }).renderTo === "function" &&
 		typeof (value as { toString?: unknown }).toString === "function"
 	);
+}
+
+function getBasesDisplayString(value: RenderableBasesValue): string {
+	const text = value.toString();
+	return text === "[object Object]" ? "" : text;
 }
 
 export function isNullBasesValue(value: unknown): boolean {
@@ -29,7 +40,7 @@ export function isNullBasesValue(value: unknown): boolean {
 		return true;
 	}
 
-	return isBasesValue(value) && isNullishDisplayString(value.toString());
+	return isBasesValue(value) && isNullishDisplayString(getBasesDisplayString(value));
 }
 
 export function isEmptyCardDisplayValue(value: unknown): boolean {
@@ -46,7 +57,7 @@ export function isEmptyCardDisplayValue(value: unknown): boolean {
 	}
 
 	if (isBasesValue(value)) {
-		return value.toString().trim() === "";
+		return getBasesDisplayString(value).trim() === "";
 	}
 
 	return false;
@@ -64,11 +75,11 @@ export function renderBasesValue(
 	try {
 		value.renderTo(container, renderContext);
 		if (!container.hasChildNodes() && !container.textContent) {
-			container.textContent = value.toString();
+			container.textContent = getBasesDisplayString(value);
 		}
 	} catch (error) {
 		console.debug("[TaskNotes] Error rendering Bases value:", error);
-		container.textContent = value.toString();
+		container.textContent = getBasesDisplayString(value);
 	}
 
 	return true;
@@ -91,15 +102,15 @@ export function extractBasesValue(value: unknown): unknown {
 		const v = value as Record<string, unknown>;
 
 		if (v.icon === "lucide-link" && "data" in v && v.data !== null && v.data !== undefined) {
-			const linkPath = String(v.data);
+			const linkPath = stringifyUnknown(v.data);
 			if (!linkPath.match(/^[a-z]+:\/\//i)) {
-				const display = "display" in v && v.display ? String(v.display) : null;
+				const display = "display" in v && v.display ? stringifyUnknown(v.display) : null;
 				if (display && display !== linkPath) {
 					return `[[${linkPath}|${display}]]`;
 				}
 				return `[[${linkPath}]]`;
 			}
-			const display = "display" in v && v.display ? String(v.display) : null;
+			const display = "display" in v && v.display ? stringifyUnknown(v.display) : null;
 			if (display) {
 				return `[${display}](${linkPath})`;
 			}
@@ -118,7 +129,7 @@ export function extractBasesValue(value: unknown): unknown {
 		if (v.icon === "lucide-file-question" || v.icon === "lucide-help-circle") {
 			return "";
 		}
-		return v.icon ? String(v.icon).replace("lucide-", "") : "";
+		return v.icon ? stringifyUnknown(v.icon).replace("lucide-", "") : "";
 	}
 	return value;
 }

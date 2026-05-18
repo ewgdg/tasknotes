@@ -1,22 +1,120 @@
-import { Component, App, setIcon } from "obsidian";
-import type { BasesPropertyId, BasesQueryResult, BasesView, BasesViewConfig } from "obsidian";
+import { Component, App, Notice, setIcon, TFile } from "obsidian";
+import type {
+	BasesPropertyId,
+	BasesQueryResult,
+	BasesViewConfig,
+	EventRef,
+} from "obsidian";
 import TaskNotesPlugin from "../main";
 import { BasesDataAdapter } from "./BasesDataAdapter";
 import { PropertyMappingService } from "./PropertyMappingService";
-import { TaskInfo, EVENT_TASK_UPDATED } from "../types";
+import { TaskInfo, EVENT_TASK_DELETED, EVENT_TASK_UPDATED } from "../types";
 import { convertInternalToUserProperties } from "../utils/propertyMapping";
 import { DEFAULT_INTERNAL_VISIBLE_PROPERTIES } from "../settings/defaults";
 import { SearchBox } from "./components/SearchBox";
 import { TaskSearchFilter } from "./TaskSearchFilter";
 import { BatchContextMenu } from "../components/BatchContextMenu";
 import type { TaskCardOptions } from "../ui/TaskCard";
+import { normalizeDependencyList } from "../utils/dependencyUtils";
+import { identifyTaskNotesFromBasesData } from "./helpers";
+import {
+	formatTasksForClipboard,
+	type ClipboardTask,
+	type TaskCopyFormat,
+} from "../utils/taskClipboard";
+import { stringifyUnknown } from "../utils/stringUtils";
+
+type BasesEphemeralState = {
+	scrollTop?: unknown;
+};
+
+type TaskUpdateEventData = {
+	path?: string;
+	originalTask?: TaskInfo;
+	updatedTask?: TaskInfo;
+	task?: TaskInfo;
+	taskInfo?: TaskInfo;
+};
+
+type TaskDeletedEventData = {
+	path?: string;
+	deletedTask?: TaskInfo;
+	prevCache?: {
+		frontmatter?: Record<string, unknown>;
+	};
+};
+
+type BasesCreateFileFrontmatter = Record<string, unknown>;
+
+type TaskCreationPrepopulatedValues = Partial<TaskInfo> & {
+	customFrontmatter?: Record<string, unknown>;
+};
+
+type BasesViewAction = {
+	name: string;
+	icon?: string;
+	callback: () => void;
+};
+
+type BasesExportColumn = {
+	id: string;
+	label: string;
+};
+
+type BasesFilterLike = {
+	conjunction?: unknown;
+	filters?: unknown;
+	rule?: {
+		text?: unknown;
+	};
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toStringArray(value: unknown): string[] {
+	return Array.isArray(value) ? value.map(String) : [String(value)];
+}
+
+function formatBasesExportValue(value: unknown): string {
+	return stringifyUnknown(value).replace(/\r?\n/g, " ");
+}
+
+function escapeTsvCell(value: string): string {
+	return value.replace(/\t/g, " ");
+}
+
+function escapeCsvCell(value: string): string {
+	if (!/[",\r\n]/.test(value)) {
+		return value;
+	}
+	return `"${value.replace(/"/g, '""')}"`;
+}
+
+function sanitizeExportFileName(name: string): string {
+	const sanitized = name
+		.trim()
+		.replace(/[\\/:*?"<>|]+/g, "-")
+		.replace(/\s+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return sanitized || "tasknotes-bases-export";
+}
+
+function decodeQuotedValue(value: string): string {
+	try {
+		return JSON.parse(`"${value}"`) as string;
+	} catch {
+		return value;
+	}
+}
 
 /**
  * Abstract base class for all TaskNotes Bases views.
- * Properly extends Component to leverage lifecycle, and implements BasesView interface.
+ * Extends Component and is adapted to the public BasesView type at registration.
  * Note: Bases types (BasesView, BasesViewConfig) are available from obsidian-api declarations.
  */
-export abstract class BasesViewBase extends Component implements BasesView {
+export abstract class BasesViewBase extends Component {
 	// BasesView properties (provided by Bases when factory returns this instance)
 	// These match the BasesView interface from Obsidian's internal Bases API
 	app!: App;
@@ -28,7 +126,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	protected propertyMapper: PropertyMappingService;
 	protected containerEl: HTMLElement;
 	protected rootElement: HTMLElement | null = null;
-	protected taskUpdateListener: any = null;
+	protected taskUpdateListener: unknown = null;
 	protected updateDebounceTimer: number | null = null;
 	protected dataUpdateDebounceTimer: number | null = null;
 	protected relevantPathsCache: Set<string> = new Set();
@@ -43,8 +141,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	protected selectionModeCleanup: (() => void) | null = null;
 	protected selectionIndicatorEl: HTMLElement | null = null;
 
-	constructor(controller: any, containerEl: HTMLElement, plugin: TaskNotesPlugin) {
-		// Call Component constructor
+	constructor(controller: unknown, containerEl: HTMLElement, plugin: TaskNotesPlugin) {
 		super();
 		this.plugin = plugin;
 		this.containerEl = containerEl;
@@ -69,7 +166,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		this.setupTaskUpdateListener();
 		this.setupSelectionHandling();
 		this.updateRelevantPathsCache();
-		this.render();
+		void this.render();
 	}
 
 	/**
@@ -85,7 +182,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 
 		// Debounce data updates to avoid freezing during typing
 		if (this.dataUpdateDebounceTimer) {
-			clearTimeout(this.dataUpdateDebounceTimer);
+			window.clearTimeout(this.dataUpdateDebounceTimer);
 		}
 
 		// Use correct window for pop-out window support
@@ -93,12 +190,13 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		this.dataUpdateDebounceTimer = win.setTimeout(() => {
 			this.dataUpdateDebounceTimer = null;
 			try {
-				this.render();
+				this.updateRelevantPathsCache();
+				void this.render();
 			} catch (error) {
 				console.error(`[TaskNotes][${this.type}] Render error:`, error);
 				this.renderError(error as Error);
 			}
-		}, 500);  // 500ms debounce for data updates
+		}, 500); // 500ms debounce for data updates
 	}
 
 	/**
@@ -123,7 +221,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	/**
 	 * Lifecycle: Save ephemeral state (scroll position, etc).
 	 */
-	getEphemeralState(): any {
+	getEphemeralState(): unknown {
 		return {
 			scrollTop: this.rootElement?.scrollTop || 0,
 		};
@@ -132,12 +230,13 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	/**
 	 * Lifecycle: Restore ephemeral state.
 	 */
-	setEphemeralState(state: any): void {
-		if (!state || !this.rootElement || !this.rootElement.isConnected) return;
+	setEphemeralState(state: unknown): void {
+		if (!isRecord(state) || !this.rootElement || !this.rootElement.isConnected) return;
 
 		try {
-			if (state.scrollTop !== undefined) {
-				this.rootElement.scrollTop = state.scrollTop;
+			const ephemeralState: BasesEphemeralState = state;
+			if (typeof ephemeralState.scrollTop === "number") {
+				this.rootElement.scrollTop = ephemeralState.scrollTop;
 			}
 		} catch (e) {
 			console.debug("[TaskNotes][Bases] Failed to restore ephemeral state:", e);
@@ -161,7 +260,53 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	 * Lifecycle: Refresh/re-render the view.
 	 */
 	refresh(): void {
-		this.render();
+		void this.render();
+	}
+
+	/**
+	 * Native Bases result-count menu hook.
+	 * Obsidian invokes this for the built-in Copy action before custom view actions.
+	 */
+	copyToClipboard(): void {
+		void this.copyBasesTableToClipboard();
+	}
+
+	/**
+	 * Native Bases result-count menu hook.
+	 * Obsidian invokes this for the built-in Export CSV action before custom view actions.
+	 */
+	exportTable(): void {
+		void this.exportBasesTableAsCsv();
+	}
+
+	/**
+	 * Undocumented Bases hook used by the native result-count menu.
+	 * Obsidian calls this after its built-in Copy and Export CSV actions.
+	 */
+	getViewActions(): BasesViewAction[] {
+		return [
+			{
+				name: "Copy task filenames",
+				icon: "lucide-file-text",
+				callback: () => {
+					void this.copyCurrentViewTasks("filenames");
+				},
+			},
+			{
+				name: "Copy task links",
+				icon: "lucide-link",
+				callback: () => {
+					void this.copyCurrentViewTasks("markdown-links");
+				},
+			},
+			{
+				name: "Copy task titles",
+				icon: "lucide-text",
+				callback: () => {
+					void this.copyCurrentViewTasks("titles");
+				},
+			},
+		];
 	}
 
 	/**
@@ -198,20 +343,20 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	 */
 	protected setupNewTaskButton(): void {
 		// Defer to allow Bases to render its toolbar first
-		setTimeout(() => this.injectNewTaskButton(), 100);
+		window.setTimeout(() => this.injectNewTaskButton(), 100);
 
 		// Register cleanup to toggle off the active class when view is unloaded
 		this.register(() => this.cleanupNewTaskButton());
 	}
 
 	/**
-	 * Clean up: just remove the "active" class, keep the button for reuse.
+	 * Clean up injected toolbar state.
 	 */
 	private cleanupNewTaskButton(): void {
 		const basesViewEl = this.containerEl.closest(".bases-view");
 		const parentEl = basesViewEl?.parentElement;
 
-		// Only remove the "active" class - button stays for potential reuse
+		parentEl?.querySelector(".tn-bases-new-task-btn")?.remove();
 		parentEl?.classList.remove("tasknotes-view-active");
 	}
 
@@ -243,8 +388,8 @@ export abstract class BasesViewBase extends Component implements BasesView {
 			return;
 		}
 
-		// Check if we already added the button (reuse existing)
-		if (toolbarEl.querySelector(".tn-bases-new-task-btn")) return;
+		// Replace stale buttons left behind by prior plugin reloads.
+		toolbarEl.querySelector(".tn-bases-new-task-btn")?.remove();
 
 		// Use correct document for pop-out window support
 		const doc = this.containerEl.ownerDocument;
@@ -253,9 +398,10 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		const newTaskBtn = doc.createElement("div");
 		newTaskBtn.className = "bases-toolbar-item tn-bases-new-task-btn";
 
-		const innerBtn = doc.createElement("div");
+		const innerBtn = doc.createElement("button");
 		innerBtn.className = "text-icon-button";
-		innerBtn.tabIndex = 0;
+		innerBtn.type = "button";
+		innerBtn.setAttribute("aria-label", this.plugin.i18n.translate("common.new"));
 
 		// Add icon
 		const iconSpan = doc.createElement("span");
@@ -269,14 +415,18 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		labelSpan.textContent = this.plugin.i18n.translate("common.new");
 		innerBtn.appendChild(labelSpan);
 
+		// Find the original "New" button position and insert our button there
+		const originalNewBtn = toolbarEl.querySelector<HTMLElement>(".bases-toolbar-new-item-menu");
+
 		newTaskBtn.appendChild(innerBtn);
 
-		newTaskBtn.addEventListener("click", () => {
-			this.createFileForView("New Task");
+		newTaskBtn.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+
+			void this.createFileForView("New Task");
 		});
 
-		// Find the original "New" button position and insert our button there
-		const originalNewBtn = toolbarEl.querySelector(".bases-toolbar-new-item-menu");
 		if (originalNewBtn) {
 			// Insert before the original (which will be hidden by CSS)
 			originalNewBtn.before(newTaskBtn);
@@ -295,33 +445,122 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	protected setupTaskUpdateListener(): void {
 		if (this.taskUpdateListener) return;
 
-		this.taskUpdateListener = this.plugin.emitter.on(EVENT_TASK_UPDATED, async (eventData: any) => {
-			try {
-				const updatedTask = eventData?.updatedTask || eventData?.task || eventData?.taskInfo;
-				if (!updatedTask?.path) return;
+		const taskUpdatedListener = this.plugin.emitter.on(
+			EVENT_TASK_UPDATED,
+			async (eventData: unknown) => {
+				try {
+					const taskEvent: TaskUpdateEventData = isRecord(eventData) ? eventData : {};
+					const updatedTask =
+						taskEvent.updatedTask ?? taskEvent.task ?? taskEvent.taskInfo;
+					if (!updatedTask?.path) return;
+					const originalPath =
+						taskEvent.originalTask?.path ??
+						(typeof taskEvent.path === "string" ? taskEvent.path : undefined);
 
-				// Skip if view is not visible (no point updating hidden views)
-				if (!this.rootElement?.isConnected) return;
+					// Skip if view is not visible (no point updating hidden views)
+					if (!this.rootElement?.isConnected) return;
 
-				// Use cached Set for O(1) lookup instead of O(n) iteration
-				const isRelevant = this.relevantPathsCache.has(updatedTask.path);
+					// Use cached Set for O(1) lookup instead of O(n) iteration
+					const updatedPath = updatedTask.path;
+					const isRelevant =
+						this.relevantPathsCache.has(updatedPath) ||
+						(originalPath ? this.relevantPathsCache.has(originalPath) : false);
 
-				if (isRelevant) {
-					await this.handleTaskUpdate(updatedTask);
+					if (isRelevant) {
+						if (originalPath && originalPath !== updatedPath) {
+							this.relevantPathsCache.delete(originalPath);
+							this.relevantPathsCache.add(updatedPath);
+							this.debouncedRefresh();
+							return;
+						}
+						await this.handleTaskUpdate(updatedTask);
+					}
+				} catch (error) {
+					console.error("[TaskNotes][Bases] Error in task update handler:", error);
+					this.debouncedRefresh();
 				}
-			} catch (error) {
-				console.error("[TaskNotes][Bases] Error in task update handler:", error);
-				this.debouncedRefresh();
 			}
-		});
+		);
+		const taskDeletedListener = this.plugin.emitter.on(
+			EVENT_TASK_DELETED,
+			(eventData: unknown) => {
+				this.handleTaskDeletedEvent(eventData);
+			}
+		);
+		const fileDeletedListener = this.plugin.emitter.on(
+			"file-deleted",
+			(eventData: unknown) => {
+				this.handleTaskDeletedEvent(eventData);
+			}
+		);
+
+		this.taskUpdateListener = [
+			taskUpdatedListener,
+			taskDeletedListener,
+			fileDeletedListener,
+		];
 
 		// Register cleanup using Component lifecycle
 		this.register(() => {
 			if (this.taskUpdateListener) {
-				this.plugin.emitter.offref(this.taskUpdateListener);
+				const listeners = Array.isArray(this.taskUpdateListener)
+					? this.taskUpdateListener
+					: [this.taskUpdateListener];
+				for (const listener of listeners) {
+					this.plugin.emitter.offref(listener as EventRef);
+				}
 				this.taskUpdateListener = null;
 			}
 		});
+	}
+
+	private handleTaskDeletedEvent(eventData: unknown): void {
+		const taskEvent: TaskDeletedEventData = isRecord(eventData) ? eventData : {};
+		const deletedPath =
+			typeof taskEvent.path === "string" ? taskEvent.path : taskEvent.deletedTask?.path;
+
+		if (deletedPath) {
+			this.relevantPathsCache.delete(deletedPath);
+		}
+
+		this.plugin.projectSubtasksService?.invalidateIndex();
+
+		if (!this.rootElement?.isConnected) {
+			return;
+		}
+
+		const deletedTaskHadProjects =
+			(taskEvent.deletedTask?.projects?.length ?? 0) > 0 ||
+			this.deletedCacheHasProjects(taskEvent.prevCache);
+		const deletedTaskWasRendered =
+			typeof deletedPath === "string" && this.isTaskPathRendered(deletedPath);
+
+		if (deletedTaskWasRendered || deletedTaskHadProjects) {
+			this.debouncedRefresh();
+		}
+	}
+
+	private deletedCacheHasProjects(prevCache: TaskDeletedEventData["prevCache"]): boolean {
+		const frontmatter = prevCache?.frontmatter;
+		if (!frontmatter) {
+			return false;
+		}
+
+		const projectsField = this.plugin.fieldMapper.toUserField("projects");
+		const projects = frontmatter[projectsField];
+		if (Array.isArray(projects)) {
+			return projects.length > 0;
+		}
+		return typeof projects === "string" && projects.trim().length > 0;
+	}
+
+	private isTaskPathRendered(path: string): boolean {
+		if (!this.rootElement) {
+			return false;
+		}
+
+		const cards = this.rootElement.querySelectorAll<HTMLElement>(".task-card[data-task-path]");
+		return Array.from(cards).some((card) => card.dataset.taskPath === path);
 	}
 
 	/**
@@ -330,15 +569,15 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	 */
 	protected debouncedRefresh(): void {
 		if (this.updateDebounceTimer) {
-			clearTimeout(this.updateDebounceTimer);
+			window.clearTimeout(this.updateDebounceTimer);
 		}
 
 		// Use correct window for pop-out window support
 		const win = this.containerEl.ownerDocument.defaultView || window;
 		this.updateDebounceTimer = win.setTimeout(() => {
-			this.render();
+			void this.render();
 			this.updateDebounceTimer = null;
-		}, 300);  // Increased from 150ms for better typing performance
+		}, 300); // Increased from 150ms for better typing performance
 
 		// Note: We don't need to explicitly register cleanup for this timer
 		// because it's short-lived (300ms) and clears itself. If the component
@@ -358,51 +597,72 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	 */
 	async createFileForView(
 		baseFileName?: string,
-		frontmatterProcessor?: (frontmatter: any) => void
+		frontmatterProcessor?: (frontmatter: BasesCreateFileFrontmatter) => void
 	): Promise<void> {
 		const { TaskCreationModal } = await import("../modals/TaskCreationModal");
 
-		// Extract any default values from the frontmatter processor if provided
-		const prePopulatedValues: Partial<TaskInfo> = {};
-		const customFrontmatter: Record<string, any> = {};
+		const mockFrontmatter = this.extractDefaultFrontmatterFromCurrentView();
 
 		if (frontmatterProcessor) {
-			// Create a mock frontmatter object to extract defaults
-			const mockFrontmatter: any = {};
 			frontmatterProcessor(mockFrontmatter);
+		}
 
+		const taskCreationData = this.buildTaskCreationDataFromFrontmatter(mockFrontmatter);
+
+		// Open TaskNotes creation modal
+		// Use this.app if available (set by Bases), otherwise fall back to plugin.app
+		const app = this.app || this.plugin.app;
+		const modal = new TaskCreationModal(app, this.plugin, {
+			prePopulatedValues: taskCreationData,
+			onTaskCreated: (task: TaskInfo) => {
+				// Refresh the view after task creation so it appears immediately
+				this.refresh();
+			},
+		});
+
+		modal.open();
+	}
+
+	private buildTaskCreationDataFromFrontmatter(
+		mockFrontmatter: BasesCreateFileFrontmatter
+	): TaskCreationPrepopulatedValues {
+		// Extract any default values from the frontmatter processor if provided
+		const prePopulatedValues: Partial<TaskInfo> = {};
+		const customFrontmatter: Record<string, unknown> = {};
+
+		if (Object.keys(mockFrontmatter).length > 0) {
 			// Get field mapper for property name mapping
 			const fm = this.plugin.fieldMapper;
 
 			// Map core TaskNotes properties from frontmatter
-			if (mockFrontmatter[fm.toUserField("title")]) {
+			if (mockFrontmatter[fm.toUserField("title")] !== undefined) {
 				prePopulatedValues.title = String(mockFrontmatter[fm.toUserField("title")]);
 			}
-			if (mockFrontmatter[fm.toUserField("status")]) {
+			if (mockFrontmatter[fm.toUserField("status")] !== undefined) {
 				prePopulatedValues.status = String(mockFrontmatter[fm.toUserField("status")]);
 			}
-			if (mockFrontmatter[fm.toUserField("priority")]) {
+			if (mockFrontmatter[fm.toUserField("priority")] !== undefined) {
 				prePopulatedValues.priority = String(mockFrontmatter[fm.toUserField("priority")]);
 			}
-			if (mockFrontmatter[fm.toUserField("due")]) {
+			if (mockFrontmatter[fm.toUserField("due")] !== undefined) {
 				prePopulatedValues.due = String(mockFrontmatter[fm.toUserField("due")]);
 			}
-			if (mockFrontmatter[fm.toUserField("scheduled")]) {
+			if (mockFrontmatter[fm.toUserField("scheduled")] !== undefined) {
 				prePopulatedValues.scheduled = String(mockFrontmatter[fm.toUserField("scheduled")]);
 			}
-			if (mockFrontmatter[fm.toUserField("contexts")]) {
+			if (mockFrontmatter[fm.toUserField("contexts")] !== undefined) {
 				const contexts = mockFrontmatter[fm.toUserField("contexts")];
-				prePopulatedValues.contexts = Array.isArray(contexts) ? contexts : [contexts];
+				prePopulatedValues.contexts = toStringArray(contexts);
 			}
-			if (mockFrontmatter[fm.toUserField("projects")]) {
+			if (mockFrontmatter[fm.toUserField("projects")] !== undefined) {
 				const projects = mockFrontmatter[fm.toUserField("projects")];
-				prePopulatedValues.projects = Array.isArray(projects) ? projects : [projects];
+				prePopulatedValues.projects = toStringArray(projects);
 			}
 
 			// Tags - check both the standard 'tags' property and archiveTag
-			if (mockFrontmatter.tags) {
+			if (mockFrontmatter.tags !== undefined) {
 				const tags = mockFrontmatter.tags;
-				prePopulatedValues.tags = Array.isArray(tags) ? tags : [tags];
+				prePopulatedValues.tags = toStringArray(tags);
 			}
 
 			// Archived - check for archive tag
@@ -411,21 +671,29 @@ export abstract class BasesViewBase extends Component implements BasesView {
 				prePopulatedValues.archived = mockFrontmatter.tags.includes(archiveTag);
 			}
 
-			if (mockFrontmatter[fm.toUserField("timeEstimate")]) {
-				prePopulatedValues.timeEstimate = Number(mockFrontmatter[fm.toUserField("timeEstimate")]);
+			if (mockFrontmatter[fm.toUserField("timeEstimate")] !== undefined) {
+				prePopulatedValues.timeEstimate = Number(
+					mockFrontmatter[fm.toUserField("timeEstimate")]
+				);
 			}
-			if (mockFrontmatter[fm.toUserField("recurrence")]) {
-				prePopulatedValues.recurrence = String(mockFrontmatter[fm.toUserField("recurrence")]);
+			if (mockFrontmatter[fm.toUserField("recurrence")] !== undefined) {
+				prePopulatedValues.recurrence = String(
+					mockFrontmatter[fm.toUserField("recurrence")]
+				);
 			}
-			if (mockFrontmatter[fm.toUserField("completedDate")]) {
-				prePopulatedValues.completedDate = String(mockFrontmatter[fm.toUserField("completedDate")]);
+			if (mockFrontmatter[fm.toUserField("completedDate")] !== undefined) {
+				prePopulatedValues.completedDate = String(
+					mockFrontmatter[fm.toUserField("completedDate")]
+				);
 			}
-			if (mockFrontmatter[fm.toUserField("dateCreated")]) {
-				prePopulatedValues.dateCreated = String(mockFrontmatter[fm.toUserField("dateCreated")]);
+			if (mockFrontmatter[fm.toUserField("dateCreated")] !== undefined) {
+				prePopulatedValues.dateCreated = String(
+					mockFrontmatter[fm.toUserField("dateCreated")]
+				);
 			}
-			if (mockFrontmatter[fm.toUserField("blockedBy")]) {
+			if (mockFrontmatter[fm.toUserField("blockedBy")] !== undefined) {
 				const blockedBy = mockFrontmatter[fm.toUserField("blockedBy")];
-				prePopulatedValues.blockedBy = Array.isArray(blockedBy) ? blockedBy : [blockedBy];
+				prePopulatedValues.blockedBy = normalizeDependencyList(blockedBy);
 			}
 
 			// Handle user-defined custom fields
@@ -454,7 +722,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 				fm.toUserField("completedDate"),
 				fm.toUserField("dateCreated"),
 				fm.toUserField("blockedBy"),
-				...userFields.map(uf => uf.key),
+				...userFields.map((uf) => uf.key),
 			]);
 
 			for (const [key, value] of Object.entries(mockFrontmatter)) {
@@ -465,23 +733,177 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		}
 
 		// Build the complete pre-populated values (TaskCreationData structure)
-		const taskCreationData: any = { ...prePopulatedValues };
+		const taskCreationData: TaskCreationPrepopulatedValues = { ...prePopulatedValues };
 		if (Object.keys(customFrontmatter).length > 0) {
 			taskCreationData.customFrontmatter = customFrontmatter;
 		}
 
-		// Open TaskNotes creation modal
-		// Use this.app if available (set by Bases), otherwise fall back to plugin.app
-		const app = this.app || this.plugin.app;
-		const modal = new TaskCreationModal(app, this.plugin, {
-			prePopulatedValues: taskCreationData,
-			onTaskCreated: (task: TaskInfo) => {
-				// Refresh the view after task creation so it appears immediately
-				this.refresh();
-			},
-		});
+		return taskCreationData;
+	}
 
-		modal.open();
+	private extractDefaultFrontmatterFromCurrentView(): BasesCreateFileFrontmatter {
+		const defaults: BasesCreateFileFrontmatter = {};
+		const configRecord = isRecord(this.config)
+			? (this.config as unknown as Record<string, unknown>)
+			: {};
+		const query = isRecord(configRecord.query) ? configRecord.query : undefined;
+
+		this.collectFilterDefaults(query?.filters, defaults);
+		this.collectFilterDefaults(configRecord.filters, defaults);
+
+		return defaults;
+	}
+
+	private collectFilterDefaults(
+		filter: unknown,
+		defaults: BasesCreateFileFrontmatter
+	): void {
+		if (!isRecord(filter)) return;
+
+		const filterGroup = filter as BasesFilterLike;
+		const children = Array.isArray(filterGroup.filters) ? filterGroup.filters : [];
+		if (children.length > 0) {
+			// OR filters are ambiguous as defaults; only apply deterministic AND chains.
+			if (filterGroup.conjunction !== undefined && filterGroup.conjunction !== "and") {
+				return;
+			}
+
+			for (const child of children) {
+				this.collectFilterDefaults(child, defaults);
+			}
+			return;
+		}
+
+		const ruleText = isRecord(filterGroup.rule) ? filterGroup.rule.text : undefined;
+		if (typeof ruleText === "string") {
+			this.applyFilterRuleDefault(ruleText, defaults);
+		}
+	}
+
+	private applyFilterRuleDefault(ruleText: string, defaults: BasesCreateFileFrontmatter): void {
+		const trimmedRule = ruleText.trim();
+
+		const tagMatch = trimmedRule.match(/^file\.hasTag\("((?:\\.|[^"\\])*)"\)$/);
+		if (tagMatch) {
+			const tag = decodeQuotedValue(tagMatch[1]);
+			if (tag !== this.plugin.settings.taskTag) {
+				this.addFrontmatterDefault(defaults, "tags", tag);
+			}
+			return;
+		}
+
+		const equalityMatch = trimmedRule.match(/^(.+?)\s*==\s*"((?:\\.|[^"\\])*)"$/);
+		if (equalityMatch) {
+			const property = this.normalizeFilterProperty(equalityMatch[1]);
+			if (property) {
+				this.addFrontmatterDefault(defaults, property, decodeQuotedValue(equalityMatch[2]));
+			}
+			return;
+		}
+
+		const containsMatch = trimmedRule.match(/^(.+?)\.contains\("((?:\\.|[^"\\])*)"\)$/);
+		if (containsMatch) {
+			const property = this.normalizeFilterProperty(containsMatch[1]);
+			if (property) {
+				this.addFrontmatterDefault(defaults, property, decodeQuotedValue(containsMatch[2]));
+			}
+			return;
+		}
+
+		const currentFileContainsMatch = trimmedRule.match(
+			/^(.+?)\.contains\(this\.file\.asLink\(\)\)$/
+		);
+		if (currentFileContainsMatch) {
+			const property = this.normalizeFilterProperty(currentFileContainsMatch[1]);
+			const currentFileLink = this.getCurrentFileLinkDefault();
+			if (property && currentFileLink) {
+				this.addFrontmatterDefault(defaults, property, currentFileLink);
+			}
+		}
+	}
+
+	private getCurrentFileLinkDefault(): string | null {
+		const app = this.app || this.plugin.app;
+		const activeFile = app.workspace.getActiveFile();
+		if (!activeFile || activeFile.extension === "base") {
+			return null;
+		}
+
+		return app.fileManager.generateMarkdownLink(activeFile, activeFile.path);
+	}
+
+	private normalizeFilterProperty(propertyExpression: string): string | null {
+		let property = propertyExpression.trim();
+		const listMatch = property.match(/^list\((.+)\)$/);
+		if (listMatch) {
+			property = listMatch[1].trim();
+		}
+		property = property.replace(/^(note|task)\./, "");
+
+		const fm = this.plugin.fieldMapper;
+		const coreFields = [
+			"title",
+			"status",
+			"priority",
+			"due",
+			"scheduled",
+			"contexts",
+			"projects",
+			"timeEstimate",
+			"completedDate",
+			"dateCreated",
+			"recurrence",
+			"blockedBy",
+		] as const;
+
+		if (property === "tags" || property === "file.tags") {
+			return "tags";
+		}
+
+		for (const field of coreFields) {
+			const userField = fm.toUserField(field);
+			if (property === field || property === userField) {
+				return userField;
+			}
+		}
+
+		const userFields = this.plugin.settings.userFields || [];
+		if (userFields.some((field) => field.key === property)) {
+			return property;
+		}
+
+		return null;
+	}
+
+	private addFrontmatterDefault(
+		defaults: BasesCreateFileFrontmatter,
+		property: string,
+		value: string
+	): void {
+		const fm = this.plugin.fieldMapper;
+		const listFields = new Set([
+			"tags",
+			fm.toUserField("contexts"),
+			fm.toUserField("projects"),
+			fm.toUserField("blockedBy"),
+		]);
+
+		if (!listFields.has(property)) {
+			if (defaults[property] === undefined) {
+				defaults[property] = value;
+			}
+			return;
+		}
+
+		const existing = defaults[property];
+		const values = Array.isArray(existing)
+			? existing.filter((item): item is string => typeof item === "string")
+			: typeof existing === "string"
+				? [existing]
+				: [];
+		if (!values.includes(value)) {
+			defaults[property] = [...values, value];
+		}
 	}
 
 	/**
@@ -516,7 +938,11 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		for (const basesPropertyId of basesPropertyIds) {
 			const taskCardPropertyId = this.propertyMapper.basesToTaskCardProperty(basesPropertyId);
 			const displayName = this.config.getDisplayName?.(basesPropertyId);
-			if (taskCardPropertyId && typeof displayName === "string" && displayName.trim() !== "") {
+			if (
+				taskCardPropertyId &&
+				typeof displayName === "string" &&
+				displayName.trim() !== ""
+			) {
 				labels[taskCardPropertyId] = displayName;
 			}
 		}
@@ -575,7 +1001,10 @@ export abstract class BasesViewBase extends Component implements BasesView {
 				visibleProperties = this.getVisibleProperties();
 			}
 		} catch (e) {
-			console.debug(`[${this.type}] Could not get visible properties during search setup:`, e);
+			console.debug(
+				`[${this.type}] Could not get visible properties during search setup:`,
+				e
+			);
 		}
 		this.searchFilter = new TaskSearchFilter(visibleProperties);
 
@@ -592,8 +1021,28 @@ export abstract class BasesViewBase extends Component implements BasesView {
 			this.searchBox.setValue(this.currentSearchTerm);
 		}
 
+		const shortcutTarget = this.rootElement ?? container;
+		const handleSearchShortcut = (event: KeyboardEvent): void => {
+			if (!this.searchBox || event.altKey || event.shiftKey) {
+				return;
+			}
+
+			const isFindShortcut =
+				(event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f";
+
+			if (!isFindShortcut) {
+				return;
+			}
+
+			event.preventDefault();
+			event.stopPropagation();
+			this.searchBox.focus();
+		};
+		shortcutTarget.addEventListener("keydown", handleSearchShortcut);
+
 		// Register cleanup using Component lifecycle
 		this.register(() => {
+			shortcutTarget.removeEventListener("keydown", handleSearchShortcut);
 			if (this.searchBox) {
 				this.searchBox.destroy();
 				this.searchBox = null;
@@ -613,7 +1062,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		this.currentSearchTerm = term;
 
 		// Re-render with filtered tasks
-		this.render();
+		void this.render();
 
 		const filterTime = performance.now() - startTime;
 
@@ -646,6 +1095,118 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		}
 
 		return filtered;
+	}
+
+	private async copyCurrentViewTasks(format: TaskCopyFormat): Promise<void> {
+		try {
+			const tasks = await this.getCurrentViewClipboardTasks();
+			if (tasks.length === 0) {
+				new Notice("No tasks to copy");
+				return;
+			}
+
+			const text = formatTasksForClipboard(tasks, format, (task) =>
+				this.getMarkdownLinkText(task.path)
+			);
+			await navigator.clipboard.writeText(text);
+			new Notice(`Copied ${tasks.length} tasks`);
+		} catch (error) {
+			console.error("[TaskNotes][Bases] Failed to copy current view tasks:", error);
+			new Notice("Failed to copy tasks");
+		}
+	}
+
+	private async getCurrentViewClipboardTasks(): Promise<ClipboardTask[]> {
+		const dataItems = this.dataAdapter.extractDataItems();
+		const taskNotes = await identifyTaskNotesFromBasesData(dataItems, this.plugin);
+		const filteredTasks = this.applySearchFilter(taskNotes);
+
+		return filteredTasks.map((task) => ({
+			path: task.path,
+			title: task.title,
+		}));
+	}
+
+	private getBasesExportColumns(): BasesExportColumn[] {
+		const propertyIds = this.dataAdapter.getVisiblePropertyIds();
+		return [
+			{ id: "file", label: "File" },
+			...propertyIds.map((propertyId) => ({
+				id: propertyId,
+				label: this.dataAdapter.getPropertyDisplayName(propertyId) || propertyId,
+			})),
+		];
+	}
+
+	private getBasesExportRows(): string[][] {
+		const columns = this.getBasesExportColumns();
+		const entries = this.data?.data ?? [];
+
+		return entries.map((entry) =>
+			columns.map((column) => {
+				if (column.id === "file") {
+					return entry.file?.path ?? "";
+				}
+
+				return formatBasesExportValue(
+					this.dataAdapter.getPropertyValue(entry, column.id)
+				);
+			})
+		);
+	}
+
+	private getBasesExportFileName(): string {
+		const configName =
+			typeof this.config?.get === "function" ? stringifyUnknown(this.config.get("name")) : "";
+		return `${sanitizeExportFileName(configName || this.type || "tasknotes-bases-export")}.csv`;
+	}
+
+	private async copyBasesTableToClipboard(): Promise<void> {
+		try {
+			const columns = this.getBasesExportColumns();
+			const rows = this.getBasesExportRows();
+			const text = [columns.map((column) => escapeTsvCell(column.label)), ...rows]
+				.map((row) => row.map(escapeTsvCell).join("\t"))
+				.join("\n");
+
+			await navigator.clipboard.writeText(text);
+			new Notice(`Copied ${rows.length} rows`);
+		} catch (error) {
+			console.error("[TaskNotes][Bases] Failed to copy Bases table:", error);
+			new Notice("Failed to copy table");
+		}
+	}
+
+	private async exportBasesTableAsCsv(): Promise<void> {
+		try {
+			const columns = this.getBasesExportColumns();
+			const rows = this.getBasesExportRows();
+			const csv = [columns.map((column) => column.label), ...rows]
+				.map((row) => row.map(escapeCsvCell).join(","))
+				.join("\n");
+
+			const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+			const win = this.containerEl.ownerDocument.defaultView ?? window;
+			const url = win.URL.createObjectURL(blob);
+			const link = this.containerEl.ownerDocument.createElement("a");
+			link.href = url;
+			link.download = this.getBasesExportFileName();
+			link.click();
+			win.URL.revokeObjectURL(url);
+			new Notice(`Exported ${rows.length} rows`);
+		} catch (error) {
+			console.error("[TaskNotes][Bases] Failed to export Bases table:", error);
+			new Notice("Failed to export table");
+		}
+	}
+
+	private getMarkdownLinkText(path: string): string {
+		const app = this.app || this.plugin.app;
+		const file = app.vault.getAbstractFileByPath(path);
+		if (file instanceof TFile) {
+			return app.metadataCache.fileToLinktext(file, "");
+		}
+		return path;
 	}
 
 	/**
@@ -702,7 +1263,11 @@ export abstract class BasesViewBase extends Component implements BasesView {
 			}
 
 			// Ctrl/Cmd + A to select all visible tasks (only when in selection mode)
-			if ((e.ctrlKey || e.metaKey) && e.key === "a" && selectionService.isSelectionModeActive()) {
+			if (
+				(e.ctrlKey || e.metaKey) &&
+				e.key === "a" &&
+				selectionService.isSelectionModeActive()
+			) {
 				e.preventDefault();
 				const visiblePaths = this.getVisibleTaskPaths();
 				selectionService.selectAll(visiblePaths);
@@ -779,7 +1344,9 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		}
 
 		// Also update kanban card wrappers (for visual consistency)
-		const cardWrappers = this.rootElement.querySelectorAll<HTMLElement>(".kanban-view__card-wrapper");
+		const cardWrappers = this.rootElement.querySelectorAll<HTMLElement>(
+			".kanban-view__card-wrapper"
+		);
 		for (const wrapper of cardWrappers) {
 			const path = wrapper.dataset.taskPath;
 			if (path) {
@@ -810,7 +1377,9 @@ export abstract class BasesViewBase extends Component implements BasesView {
 			card.classList.remove("task-card--selected-primary");
 		}
 
-		const cardWrappers = this.rootElement.querySelectorAll<HTMLElement>(".kanban-view__card-wrapper--selected");
+		const cardWrappers = this.rootElement.querySelectorAll<HTMLElement>(
+			".kanban-view__card-wrapper--selected"
+		);
 		for (const wrapper of cardWrappers) {
 			wrapper.classList.remove("kanban-view__card-wrapper--selected");
 			wrapper.classList.remove("kanban-view__card-wrapper--selected-primary");
@@ -830,16 +1399,47 @@ export abstract class BasesViewBase extends Component implements BasesView {
 				const doc = this.rootElement.ownerDocument;
 				this.selectionIndicatorEl = doc.createElement("div");
 				this.selectionIndicatorEl.className = "tn-selection-indicator";
+				this.selectionIndicatorEl.setAttribute("role", "button");
+				this.selectionIndicatorEl.tabIndex = 0;
 				this.selectionIndicatorEl.addEventListener("click", () => {
 					this.plugin.taskSelectionService?.clearSelection();
 					this.plugin.taskSelectionService?.exitSelectionMode();
 				});
+				this.selectionIndicatorEl.addEventListener("keydown", (event) => {
+					if (event.key !== "Enter" && event.key !== " ") return;
+					event.preventDefault();
+					this.selectionIndicatorEl?.click();
+				});
 				this.rootElement.appendChild(this.selectionIndicatorEl);
 			}
 			this.selectionIndicatorEl.textContent = `${count} selected`;
-			this.selectionIndicatorEl.style.display = "block";
+			this.selectionIndicatorEl.setAttribute(
+				"aria-label",
+				`${count} selected. Activate to clear selection.`
+			);
+			this.selectionIndicatorEl.classList.remove(
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-display-none-6b99de8b",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.selectionIndicatorEl.classList.add("tn-static-display-block-2a1b75c9");
 		} else if (this.selectionIndicatorEl) {
-			this.selectionIndicatorEl.style.display = "none";
+			this.selectionIndicatorEl.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.selectionIndicatorEl.classList.add("tn-static-display-none-6b99de8b");
 		}
 	}
 
@@ -852,7 +1452,12 @@ export abstract class BasesViewBase extends Component implements BasesView {
 		if (!selectionService) return false;
 
 		// If not in selection mode and no modifier keys, don't handle
-		if (!selectionService.isSelectionModeActive() && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+		if (
+			!selectionService.isSelectionModeActive() &&
+			!event.shiftKey &&
+			!event.ctrlKey &&
+			!event.metaKey
+		) {
 			return false;
 		}
 
@@ -892,7 +1497,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 			plugin: this.plugin,
 			selectedPaths,
 			onUpdate: () => {
-				this.render();
+				void this.render();
 			},
 		});
 
@@ -924,7 +1529,7 @@ export abstract class BasesViewBase extends Component implements BasesView {
 	 * Render the view with current data.
 	 * Subclasses implement view-specific rendering (list, kanban, calendar).
 	 */
-	abstract render(): void;
+	abstract render(): void | Promise<void>;
 
 	/**
 	 * Render an error state when rendering fails.

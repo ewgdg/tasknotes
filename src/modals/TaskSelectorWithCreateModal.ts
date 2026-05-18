@@ -1,14 +1,12 @@
-import { App, SuggestModal, TFile, Notice, setIcon, debounce } from "obsidian";
+import { App, SuggestModal, Notice, setIcon } from "obsidian";
 import { TaskInfo, TaskCreationData } from "../types";
 import { filterEmptyProjects } from "../utils/helpers";
 import type TaskNotesPlugin from "../main";
 import { TranslationKey } from "../i18n";
-import {
-	NaturalLanguageParser,
-	ParsedTaskData,
-} from "../services/NaturalLanguageParser";
+import { NaturalLanguageParser, ParsedTaskData } from "../services/NaturalLanguageParser";
 import { createTaskCard } from "../ui/TaskCard";
 import { buildTaskCreationDataFromParsed } from "../utils/buildTaskCreationDataFromParsed";
+import { NLPSuggest } from "./taskCreationSuggest";
 
 export type TaskSelectorWithCreateResult =
 	| { type: "selected"; task: TaskInfo }
@@ -22,6 +20,40 @@ export interface TaskSelectorWithCreateOptions {
 	placeholder?: string;
 	/** Optional title override */
 	title?: string;
+}
+
+function searchableValueIncludes(value: unknown, lowerQuery: string): boolean {
+	if (value === null || value === undefined) {
+		return false;
+	}
+
+	if (
+		typeof value !== "string" &&
+		typeof value !== "number" &&
+		typeof value !== "boolean"
+	) {
+		return false;
+	}
+
+	return String(value).toLowerCase().includes(lowerQuery);
+}
+
+export function taskMatchesSelectorQuery(task: TaskInfo, lowerQuery: string): boolean {
+	if (searchableValueIncludes(task.title, lowerQuery)) return true;
+	if (searchableValueIncludes(task.due, lowerQuery)) return true;
+	if (task.priority !== "normal" && searchableValueIncludes(task.priority, lowerQuery)) {
+		return true;
+	}
+	if (task.contexts?.some((context) => searchableValueIncludes(context, lowerQuery))) {
+		return true;
+	}
+
+	const filteredProjects = filterEmptyProjects(task.projects || []);
+	if (filteredProjects.some((project) => searchableValueIncludes(project, lowerQuery))) {
+		return true;
+	}
+
+	return false;
 }
 
 /**
@@ -38,11 +70,12 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 	private tasks: TaskInfo[];
 	private options: TaskSelectorWithCreateOptions;
 	private plugin: TaskNotesPlugin;
-	private translate: (key: TranslationKey, variables?: Record<string, any>) => string;
+	private translate: (key: TranslationKey, variables?: Record<string, unknown>) => string;
 	private nlParser: NaturalLanguageParser;
+	private nlpSuggest: NLPSuggest | null = null;
 	private createFooterEl: HTMLElement | null = null;
-	private currentQuery: string = "";
-	private resultHandled: boolean = false;
+	private currentQuery = "";
+	private resultHandled = false;
 
 	constructor(
 		app: App,
@@ -95,16 +128,17 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 		this.scope.register(["Shift"], "Enter", (e: KeyboardEvent) => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.createNewTask();
+			void this.createNewTask();
 			return false;
 		});
 
 		// Add input listener for real-time preview updates
 		this.inputEl.addEventListener("input", this.handleInputChange);
+		this.nlpSuggest = new NLPSuggest(this.app, this.inputEl, this.plugin);
 
 		// Create footer after DOM is ready.
 		// SuggestModal builds its DOM asynchronously, so we defer to the next tick.
-		setTimeout(() => this.createFooter(), 0);
+		window.setTimeout(() => this.createFooter(), 0);
 	}
 
 	private createFooter(): void {
@@ -113,7 +147,17 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 		const modalContentEl = this.modalEl.querySelector(".prompt")?.parentElement || this.modalEl;
 
 		this.createFooterEl = createDiv({ cls: "task-selector-create-footer" });
-		this.createFooterEl.style.display = "none";
+		this.createFooterEl.classList.remove(
+			"tn-static-display-block-2a1b75c9",
+			"tn-static-display-flex-4d51fc62",
+			"tn-static-display-flex-75816cae",
+			"tn-static-display-flex-8bb39979",
+			"tn-static-display-inline-block-60e32dcb",
+			"tn-static-display-inline-cccfa456",
+			"tn-static-display-inline-flex-f984c520",
+			"tn-static-min-height-800px-997b4c8c"
+		);
+		this.createFooterEl.classList.add("tn-static-display-none-6b99de8b");
 		modalContentEl.appendChild(this.createFooterEl);
 	}
 
@@ -127,7 +171,17 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 		if (!this.createFooterEl) return;
 
 		if (!query) {
-			this.createFooterEl.style.display = "none";
+			this.createFooterEl.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.createFooterEl.classList.add("tn-static-display-none-6b99de8b");
 			this.createFooterEl.empty();
 			return;
 		}
@@ -136,17 +190,33 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 
 		if (parsed.title && parsed.title !== "Untitled Task") {
 			this.createFooterEl.empty();
-			this.createFooterEl.style.display = "flex";
+			this.createFooterEl.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-display-none-6b99de8b",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.createFooterEl.classList.add("tn-static-display-flex-75816cae");
 
 			// Icon
-			const iconDiv = this.createFooterEl.createDiv({ cls: "task-selector-create-footer__icon" });
+			const iconDiv = this.createFooterEl.createDiv({
+				cls: "task-selector-create-footer__icon",
+			});
 			setIcon(iconDiv, "plus-circle");
 
 			// Content
-			const contentDiv = this.createFooterEl.createDiv({ cls: "task-selector-create-footer__content" });
+			const contentDiv = this.createFooterEl.createDiv({
+				cls: "task-selector-create-footer__content",
+			});
 
 			// Title line
-			const titleLine = contentDiv.createDiv({ cls: "task-selector-create-footer__title-line" });
+			const titleLine = contentDiv.createDiv({
+				cls: "task-selector-create-footer__title-line",
+			});
 			titleLine.createSpan({
 				cls: "task-selector-create-footer__title",
 				text: parsed.title,
@@ -158,11 +228,16 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 				const metaLine = contentDiv.createDiv({ cls: "task-selector-create-footer__meta" });
 				metaParts.forEach((part) => {
 					const chipEl = metaLine.createSpan({
-						cls: `task-selector-create-footer__chip task-selector-create-footer__chip--${part.type}`
+						cls: `task-selector-create-footer__chip task-selector-create-footer__chip--${part.type}`,
 					});
-					const chipIconEl = chipEl.createSpan({ cls: "task-selector-create-footer__chip-icon" });
+					const chipIconEl = chipEl.createSpan({
+						cls: "task-selector-create-footer__chip-icon",
+					});
 					setIcon(chipIconEl, part.icon);
-					chipEl.createSpan({ cls: "task-selector-create-footer__chip-text", text: part.text });
+					chipEl.createSpan({
+						cls: "task-selector-create-footer__chip-text",
+						text: part.text,
+					});
 				});
 			}
 
@@ -177,12 +252,24 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 				text: this.translate("modals.taskSelectorWithCreate.footer.createLabel"),
 			});
 		} else {
-			this.createFooterEl.style.display = "none";
+			this.createFooterEl.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.createFooterEl.classList.add("tn-static-display-none-6b99de8b");
 			this.createFooterEl.empty();
 		}
 	}
 
-	private buildMetadataParts(parsed: ParsedTaskData): Array<{ icon: string; text: string; type: string }> {
+	private buildMetadataParts(
+		parsed: ParsedTaskData
+	): Array<{ icon: string; text: string; type: string }> {
 		const parts: Array<{ icon: string; text: string; type: string }> = [];
 
 		// Due date
@@ -193,7 +280,9 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 
 		// Scheduled date
 		if (parsed.scheduledDate) {
-			const dateStr = parsed.scheduledTime ? `${parsed.scheduledDate} ${parsed.scheduledTime}` : parsed.scheduledDate;
+			const dateStr = parsed.scheduledTime
+				? `${parsed.scheduledDate} ${parsed.scheduledTime}`
+				: parsed.scheduledDate;
 			parts.push({ icon: "calendar-clock", text: dateStr, type: "scheduled" });
 		}
 
@@ -208,27 +297,31 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 			parts.push({
 				icon: "circle-dot",
 				text: statusConfig?.label || parsed.status,
-				type: "status"
+				type: "status",
 			});
 		}
 
 		// Contexts
 		if (parsed.contexts && parsed.contexts.length > 0) {
-			parsed.contexts.forEach(ctx => {
+			parsed.contexts.forEach((ctx) => {
 				parts.push({ icon: "at-sign", text: ctx, type: "context" });
 			});
 		}
 
 		// Projects
 		if (parsed.projects && parsed.projects.length > 0) {
-			parsed.projects.forEach(proj => {
-				parts.push({ icon: "folder", text: proj.replace(/^\[\[|\]\]$/g, ""), type: "project" });
+			parsed.projects.forEach((proj) => {
+				parts.push({
+					icon: "folder",
+					text: proj.replace(/^\[\[|\]\]$/g, ""),
+					type: "project",
+				});
 			});
 		}
 
 		// Tags
 		if (parsed.tags && parsed.tags.length > 0) {
-			parsed.tags.forEach(tag => {
+			parsed.tags.forEach((tag) => {
 				parts.push({ icon: "hash", text: tag, type: "tag" });
 			});
 		}
@@ -248,9 +341,10 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 
 		// Details (truncated)
 		if (parsed.details) {
-			const truncated = parsed.details.length > 30
-				? parsed.details.substring(0, 30) + "..."
-				: parsed.details;
+			const truncated =
+				parsed.details.length > 30
+					? parsed.details.substring(0, 30) + "..."
+					: parsed.details;
 			parts.push({ icon: "file-text", text: truncated, type: "details" });
 		}
 
@@ -261,7 +355,11 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 				const fieldDef = userFieldDefs.find((f) => f.id === fieldId);
 				const displayName = fieldDef?.displayName || fieldId;
 				const displayValue = Array.isArray(value) ? value.join(", ") : value;
-				parts.push({ icon: "sliders-horizontal", text: `${displayName}: ${displayValue}`, type: "userfield" });
+				parts.push({
+					icon: "sliders-horizontal",
+					text: `${displayName}: ${displayValue}`,
+					type: "userfield",
+				});
 			}
 		}
 
@@ -291,7 +389,9 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 			const result = await this.plugin.taskService.createTask(taskData);
 
 			new Notice(
-				this.translate("modals.taskCreation.notices.success", { title: result.taskInfo.title })
+				this.translate("modals.taskCreation.notices.success", {
+					title: result.taskInfo.title,
+				})
 			);
 
 			// Close modal and return result
@@ -321,25 +421,7 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 			.filter((task) => !task.archived)
 			.filter((task) => {
 				if (!query) return true;
-
-				// Search in title
-				if (task.title && task.title.toLowerCase().includes(lowerQuery)) return true;
-
-				// Search in due date
-				if (task.due && task.due.toLowerCase().includes(lowerQuery)) return true;
-
-				// Search in priority
-				if (task.priority && task.priority !== "normal" && task.priority.toLowerCase().includes(lowerQuery))
-					return true;
-
-				// Search in contexts (filter out null/undefined values)
-				if (task.contexts?.some((c) => c && c.toLowerCase().includes(lowerQuery))) return true;
-
-				// Search in projects (filter out null/undefined values)
-				const filteredProjects = filterEmptyProjects(task.projects || []);
-				if (filteredProjects.some((p) => p && p.toLowerCase().includes(lowerQuery))) return true;
-
-				return false;
+				return taskMatchesSelectorQuery(task, lowerQuery);
 			})
 			.sort((a, b) => {
 				// Sort by completion status first (incomplete tasks come first)
@@ -391,6 +473,8 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 	onClose(): void {
 		// Remove event listeners
 		this.inputEl.removeEventListener("input", this.handleInputChange);
+		this.nlpSuggest?.close();
+		this.nlpSuggest = null;
 
 		// Clean up footer element
 		if (this.createFooterEl) {
@@ -400,7 +484,7 @@ export class TaskSelectorWithCreateModal extends SuggestModal<TaskInfo> {
 
 		// Obsidian's SuggestModal calls onClose() BEFORE onChooseSuggestion().
 		// Defer the cancelled check to the next tick so onChooseSuggestion() can set resultHandled first.
-		setTimeout(() => {
+		window.setTimeout(() => {
 			if (!this.resultHandled) {
 				this.options.onResult({ type: "cancelled" });
 			}

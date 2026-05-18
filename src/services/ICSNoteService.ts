@@ -11,7 +11,12 @@ import {
 } from "../utils/filenameGenerator";
 import { ensureFolderExists } from "../utils/helpers";
 import { processTemplate, ICSTemplateData } from "../utils/templateProcessor";
-import { TranslationKey } from "../i18n";
+import type { InterpolationValues, TranslationKey } from "../i18n";
+
+export interface ICSEventReference {
+	event: ICSEvent;
+	subscriptionName?: string;
+}
 
 /**
  * Service for creating notes and tasks from ICS calendar events
@@ -19,8 +24,105 @@ import { TranslationKey } from "../i18n";
 export class ICSNoteService {
 	constructor(private plugin: TaskNotesPlugin) {}
 
-	private translate(key: TranslationKey, variables?: Record<string, any>): string {
+	private translate(key: TranslationKey, variables?: InterpolationValues): string {
 		return this.plugin.i18n.translate(key, variables);
+	}
+
+	/**
+	 * Find a loaded calendar event by its stored ICS event id.
+	 */
+	findEventById(eventId: string): ICSEventReference | null {
+		const trimmedEventId = eventId.trim();
+		if (!trimmedEventId) return null;
+
+		const icsEvent = this.plugin.icsSubscriptionService
+			?.getAllEvents()
+			.find((event) => event.id === trimmedEventId);
+		if (icsEvent) {
+			const subscriptionName = this.plugin.icsSubscriptionService
+				?.getSubscriptions()
+				.find((subscription) => subscription.id === icsEvent.subscriptionId)?.name;
+			return { event: icsEvent, subscriptionName };
+		}
+
+		const googleEvent = this.plugin.googleCalendarService
+			?.getAllEvents()
+			.find((event) => event.id === trimmedEventId);
+		if (googleEvent) {
+			const calendarId = googleEvent.subscriptionId.replace("google-", "");
+			const subscriptionName =
+				this.plugin.googleCalendarService
+					?.getAvailableCalendars()
+					.find((calendar) => calendar.id === calendarId)?.summary || "Google Calendar";
+			return { event: googleEvent, subscriptionName };
+		}
+
+		const microsoftEvent = this.plugin.microsoftCalendarService
+			?.getAllEvents()
+			.find((event) => event.id === trimmedEventId);
+		if (microsoftEvent) {
+			const calendarId = microsoftEvent.subscriptionId.replace("microsoft-", "");
+			const subscriptionName =
+				this.plugin.microsoftCalendarService
+					?.getAvailableCalendars()
+					.find((calendar) => calendar.id === calendarId)?.summary ||
+				"Microsoft Calendar";
+			return { event: microsoftEvent, subscriptionName };
+		}
+
+		return null;
+	}
+
+	/**
+	 * Count linked notes/tasks per calendar event id in one pass.
+	 */
+	async getRelatedNoteCountsByEventId(): Promise<Map<string, number>> {
+		const pathsByEventId = new Map<string, Set<string>>();
+		const icsEventIdField = this.plugin.fieldMapper.toUserField("icsEventId");
+
+		const addReference = (eventIds: unknown, path: string): void => {
+			for (const eventId of this.normalizeEventIds(eventIds)) {
+				let paths = pathsByEventId.get(eventId);
+				if (!paths) {
+					paths = new Set<string>();
+					pathsByEventId.set(eventId, paths);
+				}
+				paths.add(path);
+			}
+		};
+
+		try {
+			const allTasks = await this.plugin.cacheManager.getAllTasks();
+			for (const task of allTasks) {
+				addReference(task.icsEventId, task.path);
+			}
+
+			const noteFiles = this.plugin.app.vault.getMarkdownFiles();
+			for (const file of noteFiles) {
+				const cache = this.plugin.app.metadataCache.getFileCache(file);
+				const frontmatter = cache?.frontmatter;
+				if (!frontmatter) continue;
+				addReference(frontmatter[icsEventIdField], file.path);
+			}
+		} catch (error) {
+			console.error("Error counting related notes for ICS events:", error);
+			return new Map();
+		}
+
+		return new Map(
+			Array.from(pathsByEventId.entries()).map(([eventId, paths]) => [
+				eventId,
+				paths.size,
+			])
+		);
+	}
+
+	private normalizeEventIds(value: unknown): string[] {
+		const values = Array.isArray(value) ? value : value ? [value] : [];
+		return values
+			.filter((eventId): eventId is string => typeof eventId === "string")
+			.map((eventId) => eventId.trim())
+			.filter(Boolean);
 	}
 
 	/**
@@ -47,11 +149,12 @@ export class ICSNoteService {
 				title: overrides?.title || icsEvent.title,
 				status: overrides?.status || this.plugin.settings.defaultTaskStatus,
 				priority: overrides?.priority || this.plugin.settings.defaultTaskPriority,
-				due: overrides?.due !== undefined
-				? overrides.due
-				: this.plugin.settings.icsIntegration?.useICSEndAsDue
-					? this.computeDueFromICSEnd(icsEvent)
-					: undefined,
+				due:
+					overrides?.due !== undefined
+						? overrides.due
+						: this.plugin.settings.icsIntegration?.useICSEndAsDue
+							? this.computeDueFromICSEnd(icsEvent)
+							: undefined,
 				// Safe date handling per guidelines:
 				// - all-day: YYYY-MM-DD (UTC-anchored calendar day)
 				// - timed: YYYY-MM-DDTHH:mm (local)
@@ -69,7 +172,7 @@ export class ICSNoteService {
 				dateModified: getCurrentTimestamp(),
 				// Spread overrides but exclude 'due' since we handle it specially above
 				...Object.fromEntries(
-					Object.entries(overrides || {}).filter(([key]) => key !== 'due')
+					Object.entries(overrides || {}).filter(([key]) => key !== "due")
 				),
 			};
 
@@ -96,9 +199,10 @@ export class ICSNoteService {
 		try {
 			if (!icsEvent.start) return undefined;
 			// For all-day events with date-only format (YYYY-MM-DD), append T00:00:00 to parse as local midnight
-			const startDateStr = icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
-				? icsEvent.start + 'T00:00:00'
-				: icsEvent.start;
+			const startDateStr =
+				icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
+					? icsEvent.start + "T00:00:00"
+					: icsEvent.start;
 			const start = new Date(startDateStr);
 			if (icsEvent.allDay) {
 				return formatDateForStorage(start);
@@ -131,7 +235,7 @@ export class ICSNoteService {
 			if (icsEvent.allDay) {
 				if (!icsEvent.start) return undefined;
 				const startDateStr = /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
-					? icsEvent.start + 'T00:00:00'
+					? icsEvent.start + "T00:00:00"
 					: icsEvent.start;
 				const startDate = new Date(startDateStr);
 				return formatDateForStorage(startDate);
@@ -139,7 +243,7 @@ export class ICSNoteService {
 
 			// Timed event: use the actual end time
 			const endDateStr = /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.end)
-				? icsEvent.end + 'T00:00:00'
+				? icsEvent.end + "T00:00:00"
 				: icsEvent.end;
 			const endDate = new Date(endDateStr);
 			return format(endDate, "yyyy-MM-dd'T'HH:mm");
@@ -167,15 +271,15 @@ export class ICSNoteService {
 			const subscriptionName = subscription?.name || "Unknown Calendar";
 
 			// For all-day events with date-only format (YYYY-MM-DD), append T00:00:00 to parse as local midnight
-			const startDateStr = icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
-				? icsEvent.start + 'T00:00:00'
-				: icsEvent.start;
+			const startDateStr =
+				icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
+					? icsEvent.start + "T00:00:00"
+					: icsEvent.start;
 			const eventStartDate = new Date(startDateStr);
 
 			// Determine note title
 			const noteTitle =
-				overrides?.title ||
-				`${icsEvent.title} - ${format(eventStartDate, "PPP")}`;
+				overrides?.title || `${icsEvent.title} - ${format(eventStartDate, "PPP")}`;
 
 			// Determine folder (safely handle missing icsIntegration settings)
 			const rawFolder =
@@ -244,7 +348,7 @@ export class ICSNoteService {
 			// Process template if provided
 			const dateCreatedField = this.plugin.fieldMapper.toUserField("dateCreated");
 			const dateModifiedField = this.plugin.fieldMapper.toUserField("dateModified");
-			let frontmatter: Record<string, any> = {
+			let frontmatter: Record<string, unknown> = {
 				title: noteTitle,
 				[dateCreatedField]: getCurrentTimestamp(),
 				[dateModifiedField]: getCurrentTimestamp(),
@@ -294,17 +398,25 @@ export class ICSNoteService {
 					: "";
 			const content = `${yamlHeader}${bodyContent}`;
 
-			// Create the file
-			const file = await this.plugin.app.vault.create(fullPath, content);
+				// Create the file
+				const file = await this.plugin.app.vault.create(fullPath, content);
 
-			// Create NoteInfo object
-			const noteInfo: NoteInfo = {
-				title: noteTitle,
-				path: file.path,
-				tags: frontmatter.tags || [],
-				createdDate: frontmatter.dateCreated,
-				lastModified: Date.now(),
-			};
+				const noteTags = Array.isArray(frontmatter.tags)
+					? frontmatter.tags.filter((tag): tag is string => typeof tag === "string")
+					: [];
+				const createdDate =
+					typeof frontmatter[dateCreatedField] === "string"
+						? frontmatter[dateCreatedField]
+						: undefined;
+
+				// Create NoteInfo object
+				const noteInfo: NoteInfo = {
+					title: noteTitle,
+					path: file.path,
+					tags: noteTags,
+					createdDate,
+					lastModified: Date.now(),
+				};
 
 			return { file, noteInfo };
 		} catch (error) {
@@ -324,13 +436,16 @@ export class ICSNoteService {
 	async findRelatedNotes(icsEvent: ICSEvent): Promise<(TaskInfo | NoteInfo)[]> {
 		try {
 			const relatedNotes: (TaskInfo | NoteInfo)[] = [];
+			const relatedPaths = new Set<string>();
 			const icsEventIdField = this.plugin.fieldMapper.toUserField("icsEventId");
 
 			// Search through cached tasks
 			const allTasks = await this.plugin.cacheManager.getAllTasks();
 			for (const task of allTasks) {
 				if (task.icsEventId && task.icsEventId.includes(icsEvent.id)) {
+					if (relatedPaths.has(task.path)) continue;
 					relatedNotes.push(task);
+					relatedPaths.add(task.path);
 				}
 			}
 
@@ -347,6 +462,7 @@ export class ICSNoteService {
 						: icsEventIds === icsEvent.id; // backwards compatibility
 
 					if (frontmatter && hasEventId) {
+						if (relatedPaths.has(file.path)) continue;
 						const noteInfo: NoteInfo = {
 							title: frontmatter.title || file.basename,
 							path: file.path,
@@ -355,8 +471,9 @@ export class ICSNoteService {
 							lastModified: file.stat.mtime,
 						};
 						relatedNotes.push(noteInfo);
+						relatedPaths.add(file.path);
 					}
-				} catch (error) {
+				} catch {
 					// Skip files that can't be read
 					continue;
 				}
@@ -427,16 +544,17 @@ export class ICSNoteService {
 
 		if (icsEvent.start) {
 			// For all-day events with date-only format (YYYY-MM-DD), append T00:00:00 to parse as local midnight
-			const startDateStr = icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
-				? icsEvent.start + 'T00:00:00'
-				: icsEvent.start;
+			const startDateStr =
+				icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
+					? icsEvent.start + "T00:00:00"
+					: icsEvent.start;
 			const startDate = new Date(startDateStr);
 			details.push(`**Start:** ${format(startDate, "PPPp")}`);
 		}
 
 		if (icsEvent.end && !icsEvent.allDay) {
 			const endDateStr = /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.end)
-				? icsEvent.end + 'T00:00:00'
+				? icsEvent.end + "T00:00:00"
 				: icsEvent.end;
 			const endDate = new Date(endDateStr);
 			details.push(`**End:** ${format(endDate, "PPPp")}`);
@@ -465,7 +583,7 @@ export class ICSNoteService {
 	/**
 	 * Format a value for YAML frontmatter
 	 */
-	private formatYamlValue(value: any): string {
+	private formatYamlValue(value: unknown): string {
 		if (typeof value === "string") {
 			// Simple check for strings that need quoting
 			if (
@@ -494,12 +612,14 @@ export class ICSNoteService {
 
 		try {
 			// For all-day events with date-only format (YYYY-MM-DD), append T00:00:00 to parse as local midnight
-			const startDateStr = icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
-				? icsEvent.start + 'T00:00:00'
-				: icsEvent.start;
-			const endDateStr = icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.end)
-				? icsEvent.end + 'T00:00:00'
-				: icsEvent.end;
+			const startDateStr =
+				icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.start)
+					? icsEvent.start + "T00:00:00"
+					: icsEvent.start;
+			const endDateStr =
+				icsEvent.allDay && /^\d{4}-\d{2}-\d{2}$/.test(icsEvent.end)
+					? icsEvent.end + "T00:00:00"
+					: icsEvent.end;
 
 			const startTime = new Date(startDateStr).getTime();
 			const endTime = new Date(endDateStr).getTime();

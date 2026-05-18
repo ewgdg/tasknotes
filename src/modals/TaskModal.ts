@@ -1,55 +1,61 @@
-import {
-	App,
-	Modal,
-	Notice,
-	Setting,
-	setIcon,
-	TAbstractFile,
-	TFile,
-	AbstractInputSuggest,
-	setTooltip,
-} from "obsidian";
+import { App, Modal, Notice, Setting, TAbstractFile, TFile, setIcon, setTooltip } from "obsidian";
 import TaskNotesPlugin from "../main";
 import { getOrderedModalGroups, shouldShowFieldForModal } from "./taskModalFieldConfig";
+import type { ModalFieldConfigLike, ModalFieldsConfigLike } from "./taskModalFieldConfig";
 import { createTaskModalMarkdownEditor } from "./taskModalEditorAdapter";
 import { DateContextMenu } from "../components/DateContextMenu";
+import { DateTimePickerModal } from "./DateTimePickerModal";
 import { PriorityContextMenu } from "../components/PriorityContextMenu";
 import { StatusContextMenu } from "../components/StatusContextMenu";
 import { RecurrenceContextMenu } from "../components/RecurrenceContextMenu";
 import { ReminderContextMenu } from "../components/ReminderContextMenu";
 import { getDatePart, getTimePart, combineDateAndTime } from "../utils/dateUtils";
+import { stringifyUnknown } from "../utils/stringUtils";
 import { sanitizeTags, splitFrontmatterAndBody } from "../utils/helpers";
 import { ProjectSelectModal } from "./ProjectSelectModal";
 import { TaskDependency, TaskInfo, Reminder } from "../types";
-import {
-	DEFAULT_DEPENDENCY_RELTYPE,
-	formatDependencyLink,
-	normalizeDependencyEntry,
-	resolveDependencyEntry,
-} from "../utils/dependencyUtils";
-import {
-	appendInternalLink,
-	renderProjectLinks,
-	type LinkServices,
-} from "../ui/renderers/linkRenderer";
+import { DEFAULT_DEPENDENCY_RELTYPE, formatDependencyLink } from "../utils/dependencyUtils";
+import { renderProjectLinks, type LinkServices } from "../ui/renderers/linkRenderer";
 import { openTaskSelector } from "./TaskSelectorWithCreateModal";
 import { generateLink, generateLinkWithDisplay, parseLinkToPath } from "../utils/linkUtils";
-import { EmbeddableMarkdownEditor } from "../editor/EmbeddableMarkdownEditor";
+import type { EmbeddableMarkdownEditor } from "../editor/EmbeddableMarkdownEditor";
 import { createTaskModalListField } from "./taskModalOrganizationFields";
 import { createTaskCard } from "../ui/TaskCard";
-
-interface DependencyItem {
-	dependency: TaskDependency;
-	name: string;
-	path?: string;
-	unresolved?: boolean;
-}
+import { attachDateInputBehavior } from "../ui/dateInputBehavior";
+import {
+	candidateDependencyUid,
+	createDependencyItemFromDependency as createDependencyItemFromDependencyHelper,
+	createDependencyItemFromFile as createDependencyItemFromFileHelper,
+	createDependencyItemFromPath as createDependencyItemFromPathHelper,
+	dependencyItemExists,
+	DependencyItem,
+	renderDependencyList,
+} from "./taskModalDependencies";
+import { ContextSuggest, TagSuggest, UserFieldSuggest } from "./taskModalSuggests";
 
 interface ProjectItem {
 	file?: TFile;
 	name: string;
 	link: string;
 	unresolved?: boolean;
+}
+
+function userFieldValueToString(value: unknown): string {
+	if (value === null || value === undefined) return "";
+	if (typeof value === "string") return value;
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (Array.isArray(value)) return value.map(userFieldValueToString).join(", ");
+	return "";
+}
+
+function userFieldValueToInputString(value: unknown): string {
+	return Array.isArray(value)
+		? value.map(userFieldValueToString).join(", ")
+		: userFieldValueToString(value);
+}
+
+interface UserFieldToggleControl {
+	setValue(value: boolean): unknown;
 }
 
 export abstract class TaskModal extends Modal {
@@ -67,94 +73,30 @@ export abstract class TaskModal extends Modal {
 		file: TFile,
 		options: { sourcePath?: string } = {}
 	): DependencyItem {
-		const sourcePath = options.sourcePath ?? this.getDependencySourcePath();
-		const uid = formatDependencyLink(
-			this.plugin.app,
-			sourcePath,
-			file.path,
-			this.plugin.settings.useFrontmatterMarkdownLinks
+		return createDependencyItemFromFileHelper(
+			{
+				plugin: this.plugin,
+				sourcePath: options.sourcePath ?? this.getDependencySourcePath(),
+			},
+			file
 		);
-		return {
-			dependency: { uid, reltype: DEFAULT_DEPENDENCY_RELTYPE },
-			path: file.path,
-			name: file.basename,
-		};
 	}
 
 	protected createDependencyItemFromDependency(
 		dependency: TaskDependency,
 		sourcePath?: string
 	): DependencyItem {
-		const normalized = normalizeDependencyEntry(dependency);
-		if (!normalized) {
-			const fallbackName =
-				(typeof dependency === "object" && dependency && "uid" in dependency && typeof dependency.uid === "string"
-					? dependency.uid
-					: String(dependency));
-			return {
-				dependency: { uid: fallbackName, reltype: DEFAULT_DEPENDENCY_RELTYPE },
-				name: fallbackName,
-				unresolved: true,
-			};
-		}
-
-		const resolution = resolveDependencyEntry(
-			this.plugin.app,
-			sourcePath ?? this.getDependencySourcePath(),
-			normalized
+		return createDependencyItemFromDependencyHelper(
+			{ plugin: this.plugin, sourcePath: sourcePath ?? this.getDependencySourcePath() },
+			dependency
 		);
-		if (resolution) {
-			const name =
-				resolution.file?.basename || resolution.path.split("/").pop() || normalized.uid;
-			return {
-				dependency: normalized,
-				path: resolution.path,
-				name,
-			};
-		}
-
-		const cleaned = normalized.uid.replace(/^\[\[/, "").replace(/\]\]$/, "");
-		return {
-			dependency: normalized,
-			name: cleaned || dependency.uid,
-			unresolved: true,
-		};
 	}
 
 	protected createDependencyItemFromPath(path: string): DependencyItem {
-		const sourcePath = this.getDependencySourcePath();
-		const file = this.plugin.app.vault.getAbstractFileByPath(path);
-		if (file instanceof TFile) {
-			return {
-				dependency: {
-					uid: formatDependencyLink(
-						this.plugin.app,
-						sourcePath,
-						file.path,
-						this.plugin.settings.useFrontmatterMarkdownLinks
-					),
-					reltype: DEFAULT_DEPENDENCY_RELTYPE,
-				},
-				path: file.path,
-				name: file.basename,
-			};
-		}
-
-		// For unresolved dependencies, create a minimal file-like object to generate link
-		const basename = path.split("/").pop() || path;
-		const nameWithoutExt = basename.replace(/\.md$/i, "");
-
-		// Use a simple wikilink format for unresolved dependencies
-		// This will be resolved when the file is created
-		return {
-			dependency: {
-				uid: `[[${nameWithoutExt}]]`,
-				reltype: DEFAULT_DEPENDENCY_RELTYPE,
-			},
-			path,
-			name: nameWithoutExt,
-			unresolved: true,
-		};
+		return createDependencyItemFromPathHelper(
+			{ plugin: this.plugin, sourcePath: this.getDependencySourcePath() },
+			path
+		);
 	}
 
 	protected getDependencySourcePath(): string {
@@ -166,6 +108,20 @@ export abstract class TaskModal extends Modal {
 		return undefined;
 	}
 
+	protected getModalEditorFile(): TFile | null {
+		const currentTaskPath = this.getCurrentTaskPath();
+		if (!currentTaskPath) {
+			return this.app.workspace.getActiveFile();
+		}
+
+		const file = this.app.vault.getAbstractFileByPath(currentTaskPath);
+		return file instanceof TFile ? file : this.app.workspace.getActiveFile();
+	}
+
+	protected async openTaskNote(): Promise<void> {
+		// Creation modals do not have an existing task note to open.
+	}
+
 	protected renderDependencyLists(): void {
 		this.renderBlockedByList();
 		this.renderBlockingList();
@@ -175,7 +131,8 @@ export abstract class TaskModal extends Modal {
 		return {
 			metadataCache: this.plugin.app.metadataCache,
 			workspace: this.plugin.app.workspace,
-			sourcePath: this.getCurrentTaskPath() || this.plugin.app.workspace.getActiveFile()?.path || "",
+			sourcePath:
+				this.getCurrentTaskPath() || this.plugin.app.workspace.getActiveFile()?.path || "",
 		};
 	}
 
@@ -202,81 +159,14 @@ export abstract class TaskModal extends Modal {
 			return;
 		}
 
-		listEl.empty();
-
-		if (items.length === 0) {
-			return;
-		}
-
-		const linkServices = this.getLinkServices();
-
-		for (const [index, item] of items.entries()) {
-			const itemEl = listEl.createDiv({
-				cls: item.path && !item.unresolved
-					? "task-project-item task-project-item--task-card"
-					: "task-project-item",
-			});
-			if (item.unresolved) {
-				itemEl.addClass("task-project-item--unresolved");
-				setTooltip(
-					itemEl,
-					this.t("contextMenus.task.dependencies.notices.unresolved", {
-						entries: item.dependency.uid,
-					}),
-					{ placement: "top" }
-				);
-			}
-
-			const contentEl = itemEl.createDiv({
-				cls: item.path && !item.unresolved ? "task-project-card-host" : "task-project-info",
-			});
-
-			if (item.path && !item.unresolved) {
-				const taskInfo = await this.plugin.cacheManager.getCachedTaskInfo(item.path);
-				if (taskInfo) {
-					const taskCard = createTaskCard(taskInfo, this.plugin, undefined, {
-						layout: "default",
-						showSecondaryBadges: false,
-						enableHoverPreview: false,
-					});
-					contentEl.appendChild(taskCard);
-				} else {
-					const nameEl = contentEl.createSpan({ cls: "task-project-name clickable-dependency" });
-					appendInternalLink(
-						nameEl,
-						item.path,
-						item.name,
-						linkServices,
-						{
-							cssClass: "task-dependency-link internal-link",
-							hoverSource: "tasknotes-dependency-link",
-							showErrorNotices: true,
-						}
-					);
-					if (item.path !== item.name) {
-						contentEl.createDiv({ cls: "task-project-path", text: item.path });
-					}
-				}
-			} else {
-				const nameEl = contentEl.createSpan({ cls: "task-project-name" });
-				nameEl.textContent = item.name;
-				const pathText = item.path ?? item.dependency.uid;
-				contentEl.createDiv({ cls: "task-project-path", text: pathText });
-			}
-
-			const removeBtn = itemEl.createEl("button", {
-				cls: "task-project-remove",
-				text: "×",
-			});
-			setTooltip(removeBtn, this.t("modals.task.dependencies.removeTaskTooltip"), {
-				placement: "top",
-			});
-			removeBtn.addEventListener("click", (event) => {
-				event.preventDefault();
-				event.stopPropagation();
-				onRemove(index);
-			});
-		}
+		await renderDependencyList({
+			plugin: this.plugin,
+			listEl,
+			items,
+			linkServices: this.getLinkServices(),
+			translate: (key, params) => this.t(key, params),
+			onRemove,
+		});
 	}
 
 	protected extractDetailsFromContent(content: string): string {
@@ -308,12 +198,7 @@ export abstract class TaskModal extends Modal {
 	protected addBlockedByDependency(dependency: TaskDependency): void {
 		const sourcePath = this.getDependencySourcePath();
 		const item = this.createDependencyItemFromDependency(dependency, sourcePath);
-		const exists = this.blockedByItems.some(
-			(existing) =>
-				existing.dependency.uid === item.dependency.uid ||
-				(item.path && existing.path === item.path)
-		);
-		if (exists) {
+		if (dependencyItemExists(this.blockedByItems, item)) {
 			return;
 		}
 		this.blockedByItems.push(item);
@@ -326,11 +211,7 @@ export abstract class TaskModal extends Modal {
 			return;
 		}
 		const item = this.createDependencyItemFromPath(path);
-		const exists = this.blockingItems.some(
-			(existing) =>
-				existing.path === item.path || existing.dependency.uid === item.dependency.uid
-		);
-		if (exists) {
+		if (dependencyItemExists(this.blockingItems, item)) {
 			return;
 		}
 		this.blockingItems.push(item);
@@ -347,12 +228,7 @@ export abstract class TaskModal extends Modal {
 				if (currentPath && candidate.path === currentPath) {
 					return false;
 				}
-				const candidateUid = formatDependencyLink(
-					this.plugin.app,
-					sourcePath,
-					candidate.path,
-					this.plugin.settings.useFrontmatterMarkdownLinks
-				);
+				const candidateUid = candidateDependencyUid(this.plugin, sourcePath, candidate);
 				return !existingUids.has(candidateUid);
 			},
 			(selected) => {
@@ -383,12 +259,7 @@ export abstract class TaskModal extends Modal {
 				if (existingPaths.has(candidate.path)) {
 					return false;
 				}
-				const candidateUid = formatDependencyLink(
-					this.plugin.app,
-					sourcePath,
-					candidate.path,
-					this.plugin.settings.useFrontmatterMarkdownLinks
-				);
+				const candidateUid = candidateDependencyUid(this.plugin, sourcePath, candidate);
 				return !existingUids.has(candidateUid);
 			},
 			(selected) => {
@@ -437,7 +308,9 @@ export abstract class TaskModal extends Modal {
 	protected reminders: Reminder[] = [];
 
 	// User-defined fields (dynamic based on settings)
-	protected userFields: Record<string, any> = {};
+	protected userFields: Record<string, unknown> = {};
+	protected userFieldInputs = new Map<string, HTMLInputElement>();
+	protected userFieldToggles = new Map<string, UserFieldToggleControl>();
 
 	// Dependency fields
 	protected blockedByItems: DependencyItem[] = [];
@@ -492,7 +365,7 @@ export abstract class TaskModal extends Modal {
 	/**
 	 * Get a file by path - useful for testing with mocked vault
 	 */
-	protected getFileByPath(path: string): TAbstractFile | null {
+	protected getFileByPath(path: string): unknown {
 		return this.app.vault.getAbstractFileByPath(path);
 	}
 
@@ -506,14 +379,14 @@ export abstract class TaskModal extends Modal {
 	/**
 	 * Get file cache - useful for testing with mocked metadataCache
 	 */
-	protected getFileCache(file: TFile): any {
+	protected getFileCache(file: TFile): unknown {
 		return this.app.metadataCache.getFileCache(file);
 	}
 
 	/**
 	 * Resolve a link to a file - useful for testing with mocked metadataCache
 	 */
-	protected resolveLink(linkPath: string, sourcePath: string): TFile | null {
+	protected resolveLink(linkPath: string, sourcePath: string): unknown {
 		return this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath);
 	}
 
@@ -528,6 +401,10 @@ export abstract class TaskModal extends Modal {
 	abstract initializeFormData(): Promise<void>;
 	abstract handleSave(): Promise<void>;
 	abstract getModalTitle(): string;
+
+	protected async handleSubmitShortcut(_shift: boolean): Promise<void> {
+		await this.handleSave();
+	}
 
 	onOpen() {
 		this.containerEl.addClass("tasknotes-plugin", "minimalist-task-modal");
@@ -548,12 +425,12 @@ export abstract class TaskModal extends Modal {
 					return;
 				}
 				e.preventDefault();
-				this.handleSave();
+				void this.handleSubmitShortcut(e.shiftKey);
 			}
 		};
 		this.containerEl.addEventListener("keydown", this.keyboardHandler);
 
-		this.initializeFormData().then(() => {
+		void this.initializeFormData().then(() => {
 			this.createModalContent();
 			this.focusTitleInput();
 		});
@@ -574,13 +451,14 @@ export abstract class TaskModal extends Modal {
 		// Create split content wrapper at the top level for wide screen layout
 		this.splitContentWrapper = container.createDiv("modal-split-content");
 		this.splitLeftColumn = this.splitContentWrapper.createDiv("modal-split-left");
-		this.splitRightColumn = this.splitContentWrapper.createDiv("modal-split-right");
 
 		// Create primary input area (title or NLP) - subclasses can override
 		this.createPrimaryInput(this.splitLeftColumn);
 
 		// Create action bar with icons - goes in left column
 		this.createActionBar(this.splitLeftColumn);
+
+		this.splitRightColumn = this.splitLeftColumn.createDiv("modal-split-right");
 
 		// Create collapsible details section (fields in left, details editor in right)
 		this.createDetailsSection(container);
@@ -625,7 +503,7 @@ export abstract class TaskModal extends Modal {
 	}
 
 	protected createActionBar(container: HTMLElement): void {
-		this.actionBar = container.createDiv("action-bar");
+		this.actionBar = container.createDiv("tn-task-modal__action-bar");
 
 		// Due date icon
 		this.createActionIcon(
@@ -739,6 +617,9 @@ export abstract class TaskModal extends Modal {
 	}
 
 	protected createDetailsSection(container: HTMLElement): void {
+		this.userFieldInputs.clear();
+		this.userFieldToggles.clear();
+
 		// The details container wraps the expandable fields (for hide/show animation)
 		// It goes inside the left column for proper expand/collapse
 		this.detailsContainer = this.splitLeftColumn
@@ -746,10 +627,30 @@ export abstract class TaskModal extends Modal {
 			: container.createDiv("details-container");
 
 		if (!this.isExpanded) {
-			this.detailsContainer.style.display = "none";
+			this.detailsContainer.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.detailsContainer.classList.add("tn-static-display-none-6b99de8b");
 			// Also hide the right column when collapsed
 			if (this.splitRightColumn) {
-				this.splitRightColumn.style.display = "none";
+				this.splitRightColumn.classList.remove(
+					"tn-static-display-block-2a1b75c9",
+					"tn-static-display-flex-4d51fc62",
+					"tn-static-display-flex-75816cae",
+					"tn-static-display-flex-8bb39979",
+					"tn-static-display-inline-block-60e32dcb",
+					"tn-static-display-inline-cccfa456",
+					"tn-static-display-inline-flex-f984c520",
+					"tn-static-min-height-800px-997b4c8c"
+				);
+				this.splitRightColumn.classList.add("tn-static-display-none-6b99de8b");
 			}
 		}
 
@@ -757,6 +658,10 @@ export abstract class TaskModal extends Modal {
 		const config = this.plugin.settings.modalFieldsConfig;
 		const shouldShowTitle = this.shouldShowField("title", config);
 		const shouldShowDetails = this.shouldShowField("details", config);
+		this.splitContentWrapper.classList.toggle(
+			"modal-split-content--right-empty",
+			!shouldShowDetails
+		);
 
 		// Title field appears in details section for:
 		// 1. Edit modals (always, if enabled in config)
@@ -795,32 +700,39 @@ export abstract class TaskModal extends Modal {
 			detailsLabel.textContent = this.t("modals.task.detailsLabel");
 
 			// Create container for the markdown editor
-			const detailsEditorContainer = rightColumn.createDiv("details-markdown-editor");
+			const detailsEditorContainer = rightColumn.createDiv(
+				"tn-task-modal__markdown-editor tn-task-modal__markdown-editor--details"
+			);
 
 			// Create embeddable markdown editor for details using shared method
-			this.detailsMarkdownEditor = createTaskModalMarkdownEditor(this.app, detailsEditorContainer, {
-				value: this.details,
-				placeholder: this.t("modals.task.detailsPlaceholder"),
-				cls: "details-editor",
-				onChange: (value) => {
-					this.details = value;
-				},
-				onSubmit: () => {
-					// Ctrl/Cmd+Enter - save the task
-					this.handleSave();
-				},
-				onEscape: () => {
-					// ESC - close the modal
-					this.close();
-				},
-				onTab: (shift) => {
-					if (!this.plugin.settings.taskModalTabMovesFocus) {
-						return false;
-					}
+			this.detailsMarkdownEditor = createTaskModalMarkdownEditor(
+				this.app,
+				detailsEditorContainer,
+				{
+					value: this.details,
+					placeholder: this.t("modals.task.detailsPlaceholder"),
+					cls: "details-editor",
+					onChange: (value) => {
+						this.details = value;
+					},
+					onSubmit: (shift) => {
+						// Ctrl/Cmd+Enter - save the task
+						void this.handleSubmitShortcut(shift);
+					},
+					onEscape: () => {
+						// ESC - close the modal
+						this.close();
+					},
+					onTab: (shift) => {
+						if (!this.plugin.settings.taskModalTabMovesFocus) {
+							return false;
+						}
 
-					return shift ? this.focusPreviousField() : this.focusNextField();
-				},
-			});
+						return shift ? this.focusPreviousField() : this.focusNextField();
+					},
+					file: this.getModalEditorFile(),
+				}
+			);
 		}
 
 		// Additional form fields (contexts, tags, etc.) go in the details container (left side)
@@ -830,7 +742,7 @@ export abstract class TaskModal extends Modal {
 	/**
 	 * Check if a field should be shown based on field configuration
 	 */
-	protected shouldShowField(fieldId: string, config?: any): boolean {
+	protected shouldShowField(fieldId: string, config?: ModalFieldsConfigLike): boolean {
 		return shouldShowFieldForModal(fieldId, config, this.isCreationMode());
 	}
 
@@ -846,7 +758,7 @@ export abstract class TaskModal extends Modal {
 		this.createFieldsFromConfig(container, config);
 	}
 
-	protected createFieldsFromConfig(container: HTMLElement, config: any): void {
+	protected createFieldsFromConfig(container: HTMLElement, config: ModalFieldsConfigLike): void {
 		const groupsToRender = getOrderedModalGroups(config, this.isCreationMode());
 
 		for (const groupConfig of groupsToRender) {
@@ -855,11 +767,6 @@ export abstract class TaskModal extends Modal {
 			// Create a section for this group if it has fields
 			const groupContainer = container.createDiv({ cls: "task-modal__field-group" });
 
-			// Add separator before non-metadata groups
-			if (groupConfig.id !== "metadata") {
-				container.createEl("hr", { cls: "task-modal__section-separator" });
-			}
-
 			// Render fields in this group
 			for (const field of groupConfig.fields) {
 				this.createField(groupContainer, field);
@@ -867,7 +774,7 @@ export abstract class TaskModal extends Modal {
 		}
 	}
 
-	protected createField(container: HTMLElement, fieldConfig: any): void {
+	protected createField(container: HTMLElement, fieldConfig: ModalFieldConfigLike): void {
 		switch (fieldConfig.id) {
 			case "contexts":
 				this.createContextsField(container);
@@ -1002,11 +909,12 @@ export abstract class TaskModal extends Modal {
 		this.renderDependencyLists();
 	}
 
-	protected createUserFieldByConfig(container: HTMLElement, fieldConfig: any): void {
+	protected createUserFieldByConfig(
+		container: HTMLElement,
+		fieldConfig: ModalFieldConfigLike
+	): void {
 		// Find the user field definition
-		const userField = this.plugin.settings.userFields?.find(
-			(f: any) => f.id === fieldConfig.id
-		);
+		const userField = this.plugin.settings.userFields?.find((f) => f.id === fieldConfig.id);
 		if (!userField) return;
 
 		// Create the field based on its type (existing logic from createUserFields)
@@ -1018,8 +926,8 @@ export abstract class TaskModal extends Modal {
 				setting.addText((text) => {
 					const currentValue = this.userFields[userField.key];
 					const displayValue = Array.isArray(currentValue)
-						? currentValue.join(", ")
-						: currentValue || "";
+						? currentValue.map(userFieldValueToString).join(", ")
+						: userFieldValueToString(currentValue);
 
 					text.setValue(displayValue).onChange((value) => {
 						if (userField.type === "list") {
@@ -1031,6 +939,7 @@ export abstract class TaskModal extends Modal {
 							this.userFields[userField.key] = value;
 						}
 					});
+					this.userFieldInputs.set(userField.key, text.inputEl);
 
 					// Add autocomplete functionality
 					new UserFieldSuggest(this.app, text.inputEl, this.plugin, userField);
@@ -1040,21 +949,28 @@ export abstract class TaskModal extends Modal {
 			case "number": {
 				setting.addText((text) => {
 					const currentValue = this.userFields[userField.key];
-					text.setValue(currentValue?.toString() || "").onChange((value) => {
+					text.setValue(userFieldValueToString(currentValue)).onChange((value) => {
 						const numValue = parseFloat(value);
 						this.userFields[userField.key] = isNaN(numValue) ? null : numValue;
 					});
 					text.inputEl.type = "number";
+					this.userFieldInputs.set(userField.key, text.inputEl);
 				});
 				break;
 			}
 			case "date": {
 				setting.addText((text) => {
 					const currentValue = this.userFields[userField.key];
-					text.setValue(currentValue || "").onChange((value) => {
+					text.setValue(userFieldValueToString(currentValue)).onChange((value) => {
 						this.userFields[userField.key] = value;
 					});
 					text.inputEl.type = "date";
+					attachDateInputBehavior(text.inputEl, {
+						onCommit: (value) => {
+							this.userFields[userField.key] = value;
+						},
+					});
+					this.userFieldInputs.set(userField.key, text.inputEl);
 				});
 				break;
 			}
@@ -1064,8 +980,26 @@ export abstract class TaskModal extends Modal {
 					toggle.setValue(currentValue === true).onChange((value) => {
 						this.userFields[userField.key] = value;
 					});
+					this.userFieldToggles.set(userField.key, toggle);
 				});
 				break;
+			}
+		}
+	}
+
+	protected updateUserFieldControls(): void {
+		const userFieldConfigs = this.plugin.settings?.userFields || [];
+
+		for (const field of userFieldConfigs) {
+			const currentValue = this.userFields[field.key];
+			const input = this.userFieldInputs.get(field.key);
+			if (input) {
+				input.value = userFieldValueToInputString(currentValue);
+			}
+
+			const toggle = this.userFieldToggles.get(field.key);
+			if (toggle) {
+				toggle.setValue(currentValue === true || currentValue === "true");
 			}
 		}
 	}
@@ -1075,10 +1009,10 @@ export abstract class TaskModal extends Modal {
 
 		// Add a section separator if there are user fields
 		if (userFieldConfigs.length > 0) {
-			const separator = container.createDiv({ cls: "user-fields-separator" });
+			const separator = container.createDiv({ cls: "tn-task-modal__user-fields" });
 			separator.createDiv({
 				text: this.t("modals.task.customFieldsLabel"),
-				cls: "detail-label-section",
+				cls: "tn-task-modal__section-label",
 			});
 		}
 
@@ -1095,31 +1029,39 @@ export abstract class TaskModal extends Modal {
 							.onChange((value) => {
 								this.userFields[field.key] = value;
 							});
+						this.userFieldToggles.set(field.key, toggle);
 					});
 					break;
 
 				case "number":
 					new Setting(container).setName(field.displayName).addText((text) => {
 						text.setPlaceholder(this.t("modals.task.userFields.numberPlaceholder"))
-							.setValue(currentValue ? String(currentValue) : "")
+							.setValue(currentValue ? stringifyUnknown(currentValue) : "")
 							.onChange((value) => {
 								const numValue = parseFloat(value);
 								this.userFields[field.key] = isNaN(numValue) ? null : numValue;
 							});
+						this.userFieldInputs.set(field.key, text.inputEl);
 					});
 					break;
 
 				case "date":
 					new Setting(container).setName(field.displayName).addText((text) => {
 						text.setPlaceholder(this.t("modals.task.userFields.datePlaceholder"))
-							.setValue(currentValue ? String(currentValue) : "")
+							.setValue(currentValue ? stringifyUnknown(currentValue) : "")
 							.onChange((value) => {
 								this.userFields[field.key] = value || null;
 							});
+						this.userFieldInputs.set(field.key, text.inputEl);
 						// Add date picker button/icon next to the input
 						// Ensure the input and button layout as a single row with proper sizing
-						const parent = text.inputEl.parentElement as HTMLElement | null;
+						const parent = text.inputEl.parentElement;
 						if (parent) parent.addClass("tn-date-control");
+						attachDateInputBehavior(text.inputEl, {
+							onCommit: (value) => {
+								this.userFields[field.key] = value;
+							},
+						});
 						const btn = parent?.createEl("button", {
 							cls: "user-field-date-picker-btn",
 						});
@@ -1153,7 +1095,7 @@ export abstract class TaskModal extends Modal {
 						const displayValue = Array.isArray(currentValue)
 							? currentValue.join(", ")
 							: currentValue
-								? String(currentValue)
+								? stringifyUnknown(currentValue)
 								: "";
 
 						text.setPlaceholder(this.t("modals.task.userFields.listPlaceholder"))
@@ -1168,6 +1110,7 @@ export abstract class TaskModal extends Modal {
 										.filter((v) => v);
 								}
 							});
+						this.userFieldInputs.set(field.key, text.inputEl);
 
 						// Add autocomplete functionality
 						new UserFieldSuggest(this.app, text.inputEl, this.plugin, field);
@@ -1185,10 +1128,11 @@ export abstract class TaskModal extends Modal {
 								field: field.displayName,
 							})
 						)
-							.setValue(currentValue ? String(currentValue) : "")
+							.setValue(currentValue ? stringifyUnknown(currentValue) : "")
 							.onChange((value) => {
 								this.userFields[field.key] = value || null;
 							});
+						this.userFieldInputs.set(field.key, text.inputEl);
 
 						// Add autocomplete functionality
 						new UserFieldSuggest(this.app, text.inputEl, this.plugin, field);
@@ -1199,17 +1143,19 @@ export abstract class TaskModal extends Modal {
 	}
 
 	protected createActionButtons(container: HTMLElement): void {
-		const buttonContainer = container.createDiv("modal-button-container");
+		const buttonContainer = container.createDiv(
+			"modal-button-container tn-task-modal__button-bar"
+		);
 
 		// Add "Open note" button for edit modals only
 		if (this.isEditMode()) {
 			const openNoteButton = buttonContainer.createEl("button", {
-				cls: "open-note-button",
+				cls: "tn-task-modal__open-note-button",
 				text: this.t("modals.task.buttons.openNote"),
 			});
 
-			openNoteButton.addEventListener("click", async () => {
-				await (this as any).openTaskNote();
+			openNoteButton.addEventListener("click", () => {
+				void this.openTaskNote();
 			});
 		}
 
@@ -1219,14 +1165,16 @@ export abstract class TaskModal extends Modal {
 			text: this.t("modals.task.buttons.save"),
 		});
 
-		saveButton.addEventListener("click", async () => {
-			saveButton.disabled = true;
-			try {
-				await this.handleSave();
-				this.close();
-			} finally {
-				saveButton.disabled = false;
-			}
+		saveButton.addEventListener("click", () => {
+			void (async () => {
+				saveButton.disabled = true;
+				try {
+					await this.handleSave();
+					this.close();
+				} finally {
+					saveButton.disabled = false;
+				}
+			})();
 		});
 
 		// Cancel button
@@ -1243,37 +1191,68 @@ export abstract class TaskModal extends Modal {
 		if (this.isExpanded) return;
 
 		this.isExpanded = true;
-		this.detailsContainer.style.display = "block";
+		this.detailsContainer.classList.remove(
+			"tn-static-display-flex-4d51fc62",
+			"tn-static-display-flex-75816cae",
+			"tn-static-display-flex-8bb39979",
+			"tn-static-display-inline-block-60e32dcb",
+			"tn-static-display-inline-cccfa456",
+			"tn-static-display-inline-flex-f984c520",
+			"tn-static-display-none-6b99de8b",
+			"tn-static-min-height-800px-997b4c8c"
+		);
+		this.detailsContainer.classList.add("tn-static-display-block-2a1b75c9");
 		this.containerEl.addClass("expanded");
 
 		// Also show the right column (details editor) when expanding
 		if (this.splitRightColumn) {
-			this.splitRightColumn.style.display = "";
+			this.splitRightColumn.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-display-none-6b99de8b",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.splitRightColumn.style.removeProperty("display");
 		}
 
 		// Animate the expansion
-		this.detailsContainer.style.opacity = "0";
-		this.detailsContainer.style.transform = "translateY(-10px)";
+		this.detailsContainer.classList.remove(
+			"tn-static-opacity-0-6-d95b59ac",
+			"tn-static-opacity-1-c6e7979d"
+		);
+		this.detailsContainer.classList.add("tn-static-opacity-0-8d919cb5");
+		this.detailsContainer.classList.remove("tn-static-transform-translatey-0-1b976432");
+		this.detailsContainer.classList.add("tn-static-transform-translatey-10px-5b91bf02");
 
-		setTimeout(() => {
-			this.detailsContainer.style.opacity = "1";
-			this.detailsContainer.style.transform = "translateY(0)";
+		window.setTimeout(() => {
+			this.detailsContainer.classList.remove(
+				"tn-static-opacity-0-6-d95b59ac",
+				"tn-static-opacity-0-8d919cb5"
+			);
+			this.detailsContainer.classList.add("tn-static-opacity-1-c6e7979d");
+			this.detailsContainer.classList.remove("tn-static-transform-translatey-10px-5b91bf02");
+			this.detailsContainer.classList.add("tn-static-transform-translatey-0-1b976432");
 		}, 50);
 	}
 
-	protected showDateContextMenu(event: UIEvent, type: "due" | "scheduled"): void {
+	protected showDateContextMenu(_event: UIEvent, type: "due" | "scheduled"): void {
 		const currentValue = type === "due" ? this.dueDate : this.scheduledDate;
 		const title =
 			type === "due"
 				? this.t("modals.task.dateMenu.dueTitle")
 				: this.t("modals.task.dateMenu.scheduledTitle");
 
-		const menu = new DateContextMenu({
-			currentValue: currentValue ? getDatePart(currentValue) : undefined,
+		const modal = new DateTimePickerModal(this.app, {
+			currentDate: currentValue ? getDatePart(currentValue) : undefined,
 			currentTime: currentValue ? getTimePart(currentValue) : undefined,
 			title: title,
+			dateRole: type,
 			plugin: this.plugin,
-			app: this.app,
 			onSelect: (value: string | null, time: string | null) => {
 				if (value) {
 					// Combine date and time if both are provided
@@ -1296,7 +1275,7 @@ export abstract class TaskModal extends Modal {
 			},
 		});
 
-		menu.show(event);
+		modal.open();
 	}
 
 	protected showStatusContextMenu(event: UIEvent): void {
@@ -1575,7 +1554,24 @@ export abstract class TaskModal extends Modal {
 			if (iconEl && statusConfig && statusConfig.color) {
 				iconEl.style.color = statusConfig.color;
 			} else if (iconEl) {
-				iconEl.style.color = ""; // Reset to default
+				iconEl.classList.remove(
+					"tn-static-color-var-color-accent-d2cad743",
+					"tn-static-color-var-text-accent-65b47ee3",
+					"tn-static-color-var-text-muted-5872de20",
+					"tn-static-color-var-text-on-accent-f3e1679d",
+					"tn-static-color-var-text-warning-783d5f03",
+					"tn-static-color-var-tn-text-muted-a90fb6f3",
+					"tn-static-color-white-0a43e56a",
+					"tn-static-cursor-pointer-2723efcc",
+					"tn-static-font-size-12px-65574819",
+					"tn-static-font-weight-bold-0fe8c30d",
+					"tn-static-font-weight-bold-e0b452bd",
+					"tn-static-margin-2px-0-edce9b14",
+					"tn-static-padding-20px-7a035d95",
+					"tn-static-padding-20px-ebe8e48c"
+				);
+				iconEl.style.removeProperty("color");
+				// Reset to default
 			}
 		}
 
@@ -1611,7 +1607,24 @@ export abstract class TaskModal extends Modal {
 			if (iconEl && priorityConfig && priorityConfig.color) {
 				iconEl.style.color = priorityConfig.color;
 			} else if (iconEl) {
-				iconEl.style.color = ""; // Reset to default
+				iconEl.classList.remove(
+					"tn-static-color-var-color-accent-d2cad743",
+					"tn-static-color-var-text-accent-65b47ee3",
+					"tn-static-color-var-text-muted-5872de20",
+					"tn-static-color-var-text-on-accent-f3e1679d",
+					"tn-static-color-var-text-warning-783d5f03",
+					"tn-static-color-var-tn-text-muted-a90fb6f3",
+					"tn-static-color-white-0a43e56a",
+					"tn-static-cursor-pointer-2723efcc",
+					"tn-static-font-size-12px-65574819",
+					"tn-static-font-weight-bold-0fe8c30d",
+					"tn-static-font-weight-bold-e0b452bd",
+					"tn-static-margin-2px-0-edce9b14",
+					"tn-static-padding-20px-7a035d95",
+					"tn-static-padding-20px-ebe8e48c"
+				);
+				iconEl.style.removeProperty("color");
+				// Reset to default
 			}
 		}
 
@@ -1658,8 +1671,10 @@ export abstract class TaskModal extends Modal {
 	}
 
 	protected focusTitleInput(): void {
-		setTimeout(() => {
-			this.pendingTitleFocusScrollPositions = this.captureTitleFocusScrollPositions(this.titleInput);
+		window.setTimeout(() => {
+			this.pendingTitleFocusScrollPositions = this.captureTitleFocusScrollPositions(
+				this.titleInput
+			);
 			this.titleInput.focus({ preventScroll: true });
 			this.titleInput.select();
 			this.restoreTitleFocusScrollPositions(this.pendingTitleFocusScrollPositions);
@@ -1669,7 +1684,10 @@ export abstract class TaskModal extends Modal {
 	private shouldPreserveTitleFocusScroll(): boolean {
 		const doc = this.containerEl.ownerDocument;
 		const win = doc.defaultView || window;
-		return doc.body.classList.contains("is-mobile") || win.matchMedia?.("(pointer: coarse)")?.matches === true;
+		return (
+			doc.body.classList.contains("is-mobile") ||
+			win.matchMedia?.("(pointer: coarse)")?.matches === true
+		);
 	}
 
 	private attachTitleFocusScrollGuard(input: HTMLInputElement): void {
@@ -1745,7 +1763,8 @@ export abstract class TaskModal extends Modal {
 
 		const win = this.containerEl.ownerDocument.defaultView || window;
 		const requestAnimationFrame =
-			win.requestAnimationFrame ?? ((callback: FrameRequestCallback) => win.setTimeout(callback, 16));
+			win.requestAnimationFrame ??
+			((callback: FrameRequestCallback) => win.setTimeout(callback, 16));
 		requestAnimationFrame(() => this.restoreTitleFocusScrollPositions(positions));
 		win.setTimeout(() => this.restoreTitleFocusScrollPositions(positions), 50);
 		win.setTimeout(() => {
@@ -1820,22 +1839,21 @@ export abstract class TaskModal extends Modal {
 		// Don't render immediately - let the caller decide when to render
 	}
 
-	private createProjectItemFromString(projectString: string, sourcePath: string): ProjectItem | null {
+	private createProjectItemFromString(
+		projectString: string,
+		sourcePath: string
+	): ProjectItem | null {
 		// Skip null, undefined, or empty strings
-		if (
-			!projectString ||
-			typeof projectString !== "string" ||
-			projectString.trim() === ""
-		) {
+		if (!projectString || typeof projectString !== "string" || projectString.trim() === "") {
 			return null;
 		}
 
 		// Check if it's a wiki link format
 		const linkMatch = projectString.match(/^\[\[([^\]]+)\]\]$/);
 		if (linkMatch) {
-			const linkPath = linkMatch[1];
-			const file = this.resolveLink(linkPath, sourcePath);
-			if (file) {
+				const linkPath = linkMatch[1];
+				const file = this.resolveLink(linkPath, sourcePath);
+				if (file instanceof TFile) {
 				// Resolved link
 				return {
 					file,
@@ -1857,7 +1875,7 @@ export abstract class TaskModal extends Modal {
 			if (markdownMatch) {
 				const linkPath = parseLinkToPath(projectString);
 				const file = this.resolveLink(linkPath, sourcePath);
-				if (file) {
+				if (file instanceof TFile) {
 					// Resolved markdown link
 					return {
 						file,
@@ -1989,11 +2007,10 @@ export abstract class TaskModal extends Modal {
 	// Subtask management methods
 	protected async openSubtaskSelector(): Promise<void> {
 		try {
-			const cacheManager: any = this.plugin.cacheManager;
-			const allTasks: TaskInfo[] = (await cacheManager?.getAllTasks?.()) ?? [];
+			const allTasks = await this.plugin.cacheManager.getAllTasks();
 
 			// Filter out tasks that are already subtasks and the current task (if editing)
-			const currentTaskPath = this.isEditMode() ? (this as any).task?.path : undefined;
+			const currentTaskPath = this.getCurrentTaskPath();
 			const candidates = allTasks.filter((candidate) => {
 				if (currentTaskPath && candidate.path === currentTaskPath) return false;
 				return !this.selectedSubtaskFiles.some(
@@ -2006,7 +2023,7 @@ export abstract class TaskModal extends Modal {
 				return;
 			}
 
-			openTaskSelector(this.plugin, candidates, async (subtask) => {
+			openTaskSelector(this.plugin, candidates, (subtask) => {
 				if (!subtask) return;
 				const file = this.app.vault.getAbstractFileByPath(subtask.path);
 				if (file) {
@@ -2133,7 +2150,7 @@ export abstract class TaskModal extends Modal {
 			return false;
 		}
 
-		setTimeout(() => {
+		window.setTimeout(() => {
 			nextField.focus();
 		}, 50);
 		return true;
@@ -2144,7 +2161,7 @@ export abstract class TaskModal extends Modal {
 			return false;
 		}
 
-		setTimeout(() => {
+		window.setTimeout(() => {
 			this.titleInput?.focus();
 		}, 50);
 		return true;
@@ -2163,316 +2180,5 @@ export abstract class TaskModal extends Modal {
 			this.detailsMarkdownEditor = null;
 		}
 		super.onClose();
-	}
-}
-
-/**
- * Context suggestion object for compatibility with other plugins
- */
-interface ContextSuggestion {
-	value: string;
-	display: string;
-	type: "context";
-	toString(): string;
-}
-
-/**
- * Context suggestion provider using AbstractInputSuggest
- */
-class ContextSuggest extends AbstractInputSuggest<ContextSuggestion> {
-	private plugin: TaskNotesPlugin;
-	private input: HTMLInputElement;
-
-	constructor(app: App, inputEl: HTMLInputElement, plugin: TaskNotesPlugin) {
-		super(app, inputEl);
-		this.plugin = plugin;
-		this.input = inputEl;
-	}
-
-	protected async getSuggestions(_: string): Promise<ContextSuggestion[]> {
-		// Handle comma-separated values
-		const currentValues = this.input.value.split(",").map((v: string) => v.trim());
-		const currentQuery = currentValues[currentValues.length - 1];
-
-		const contexts = this.plugin.cacheManager.getAllContexts();
-		const alreadySelected = currentValues.slice(0, -1);
-		return contexts
-			.filter((context) => context && typeof context === "string")
-			.filter(
-				(context) =>
-					!alreadySelected.includes(context) &&
-					(!currentQuery || context.toLowerCase().includes(currentQuery.toLowerCase()))
-			)
-			.slice(0, 10)
-			.map((context) => ({
-				value: context,
-				display: context,
-				type: "context" as const,
-				toString() {
-					return this.value;
-				},
-			}));
-	}
-
-	public renderSuggestion(contextSuggestion: ContextSuggestion, el: HTMLElement): void {
-		el.textContent = contextSuggestion.display;
-	}
-
-	public selectSuggestion(contextSuggestion: ContextSuggestion): void {
-		const currentValues = this.input.value.split(",").map((v: string) => v.trim());
-		currentValues[currentValues.length - 1] = contextSuggestion.value;
-		this.input.value = currentValues.join(", ") + ", ";
-
-		// Trigger input event to update internal state
-		this.input.dispatchEvent(new Event("input", { bubbles: true }));
-		this.input.focus();
-	}
-}
-
-/**
- * Tag suggestion object for compatibility with other plugins
- */
-interface TagSuggestion {
-	value: string;
-	display: string;
-	type: "tag";
-	toString(): string;
-}
-
-/**
- * Tag suggestion provider using AbstractInputSuggest
- */
-class TagSuggest extends AbstractInputSuggest<TagSuggestion> {
-	private plugin: TaskNotesPlugin;
-	private input: HTMLInputElement;
-
-	constructor(app: App, inputEl: HTMLInputElement, plugin: TaskNotesPlugin) {
-		super(app, inputEl);
-		this.plugin = plugin;
-		this.input = inputEl;
-	}
-
-	protected async getSuggestions(_: string): Promise<TagSuggestion[]> {
-		// Handle comma-separated values
-		const currentValues = this.input.value.split(",").map((v: string) => v.trim());
-		const currentQuery = currentValues[currentValues.length - 1];
-
-		const tags = this.plugin.cacheManager.getAllTags();
-		const alreadySelected = currentValues.slice(0, -1);
-		return tags
-			.filter((tag) => tag && typeof tag === "string")
-			.filter(
-				(tag) =>
-					!alreadySelected.includes(tag) &&
-					(!currentQuery || tag.toLowerCase().includes(currentQuery.toLowerCase()))
-			)
-			.slice(0, 10)
-			.map((tag) => ({
-				value: tag,
-				display: tag,
-				type: "tag" as const,
-				toString() {
-					return this.value;
-				},
-			}));
-	}
-
-	public renderSuggestion(tagSuggestion: TagSuggestion, el: HTMLElement): void {
-		el.textContent = tagSuggestion.display;
-	}
-
-	public selectSuggestion(tagSuggestion: TagSuggestion): void {
-		const currentValues = this.input.value.split(",").map((v: string) => v.trim());
-		currentValues[currentValues.length - 1] = tagSuggestion.value;
-		this.input.value = currentValues.join(", ") + ", ";
-
-		// Trigger input event to update internal state
-		this.input.dispatchEvent(new Event("input", { bubbles: true }));
-		this.input.focus();
-	}
-}
-
-/**
- * User field suggestion object
- */
-interface UserFieldSuggestion {
-	value: string;
-	display: string;
-	type: "user-field";
-	fieldKey: string;
-	toString(): string;
-}
-
-/**
- * User field suggestion provider using AbstractInputSuggest
- */
-class UserFieldSuggest extends AbstractInputSuggest<UserFieldSuggestion> {
-	private plugin: TaskNotesPlugin;
-	private input: HTMLInputElement;
-	private fieldConfig: any; // UserMappedField from settings
-
-	constructor(app: App, inputEl: HTMLInputElement, plugin: TaskNotesPlugin, fieldConfig: any) {
-		super(app, inputEl);
-		this.plugin = plugin;
-		this.input = inputEl;
-		this.fieldConfig = fieldConfig;
-	}
-
-	protected async getSuggestions(_: string): Promise<UserFieldSuggestion[]> {
-		const isListField = this.fieldConfig.type === "list";
-
-		// Get current token or full value
-		let currentQuery = "";
-		let currentValues: string[] = [];
-		if (isListField) {
-			currentValues = this.input.value.split(",").map((v: string) => v.trim());
-			currentQuery = currentValues[currentValues.length - 1] || "";
-		} else {
-			currentQuery = this.input.value.trim();
-		}
-		if (!currentQuery) return [];
-
-		// Detect wikilink trigger [[... and delegate to file suggester
-		const wikiMatch = currentQuery.match(/\[\[([^\]]*)$/);
-		if (wikiMatch) {
-			const partial = wikiMatch[1] || "";
-			const { FileSuggestHelper } = await import("../suggest/FileSuggestHelper");
-			// Apply custom field filter if configured, otherwise show all files
-			const list = await FileSuggestHelper.suggest(
-				this.plugin,
-				partial,
-				20,
-				this.fieldConfig.autosuggestFilter
-			);
-			return list.map((item) => ({
-				value: item.insertText,
-				display: item.displayText,
-				type: "user-field" as const,
-				fieldKey: this.fieldConfig.key,
-				toString() {
-					return this.value;
-				},
-			}));
-		}
-
-		// Fallback to existing-values suggestion
-		const existingValues = await this.getExistingUserFieldValues(this.fieldConfig.key);
-		return existingValues
-			.filter((value) => value && typeof value === "string")
-			.filter(
-				(value) =>
-					value.toLowerCase().includes(currentQuery.toLowerCase()) &&
-					(!isListField || !currentValues.slice(0, -1).includes(value))
-			)
-			.slice(0, 10)
-			.map((value) => ({
-				value: value,
-				display: value,
-				type: "user-field" as const,
-				fieldKey: this.fieldConfig.key,
-				toString() {
-					return this.value;
-				},
-			}));
-	}
-
-	private async getExistingUserFieldValues(fieldKey: string): Promise<string[]> {
-		const run = async (): Promise<string[]> => {
-			try {
-				// Get all files and extract unique values for this field
-				const allFiles = this.plugin.app.vault.getMarkdownFiles();
-				const values = new Set<string>();
-
-				// Process all files, but with early termination for performance
-				for (const file of allFiles) {
-					try {
-						const metadata = this.plugin.app.metadataCache.getFileCache(file);
-						const frontmatter = metadata?.frontmatter;
-
-						if (frontmatter && frontmatter[fieldKey] !== undefined) {
-							const value = frontmatter[fieldKey];
-
-							if (Array.isArray(value)) {
-								// Handle list fields
-								value.forEach((v) => {
-									if (typeof v === "string" && v.trim()) {
-										values.add(v.trim());
-									}
-								});
-							} else if (typeof value === "string" && value.trim()) {
-								values.add(value.trim());
-							} else if (typeof value === "number") {
-								values.add(value.toString());
-							} else if (typeof value === "boolean") {
-								values.add(value.toString());
-							}
-						}
-
-						// Early termination: stop after finding many unique values for performance
-						// This ensures we get comprehensive suggestions without processing every file
-						if (values.size >= 200) {
-							break;
-						}
-					} catch (error) {
-						// Skip files with errors
-						continue;
-					}
-				}
-
-				return Array.from(values).sort();
-			} catch (error) {
-				console.error("Error getting user field values:", error);
-				return [];
-			}
-		};
-
-		// Use debouncing for performance in large vaults (same pattern as FileSuggestHelper)
-		const debounceMs = this.plugin.settings?.suggestionDebounceMs ?? 0;
-		if (!debounceMs) {
-			return run();
-		}
-
-		return new Promise<string[]>((resolve) => {
-			const anyPlugin = this.plugin as unknown as { __userFieldSuggestTimer?: number };
-			if (anyPlugin.__userFieldSuggestTimer) {
-				clearTimeout(anyPlugin.__userFieldSuggestTimer);
-			}
-			anyPlugin.__userFieldSuggestTimer = setTimeout(async () => {
-				const results = await run();
-				resolve(results);
-			}, debounceMs) as unknown as number;
-		});
-	}
-
-	public renderSuggestion(suggestion: UserFieldSuggestion, el: HTMLElement): void {
-		el.textContent = suggestion.display;
-	}
-
-	public selectSuggestion(suggestion: UserFieldSuggestion): void {
-		const isListField = this.fieldConfig.type === "list";
-
-		if (isListField) {
-			// Replace last token with the selected suggestion. If user is typing a
-			// wikilink region ([[...), replace that partial region; otherwise
-			// replace the token entirely with the suggestion value.
-			const parts = this.input.value.split(",");
-			const last = parts.pop() ?? "";
-			const before = parts.join(",");
-			const trimmed = last.trim();
-			const replacement = /\[\[/.test(trimmed)
-				? trimmed.replace(/\[\[[^\]]*$/, `[[${suggestion.value}]]`)
-				: suggestion.value;
-			const rebuilt = (before ? before + ", " : "") + replacement;
-			this.input.value = rebuilt.endsWith(",") ? rebuilt + " " : rebuilt + ", ";
-		} else {
-			// Replace the active [[... region or entire value
-			const val = this.input.value;
-			const replaced = val.replace(/\[\[[^\]]*$/, `[[${suggestion.value}]]`);
-			this.input.value = replaced === val ? suggestion.value : replaced;
-		}
-
-		// Trigger input event to update internal state
-		this.input.dispatchEvent(new Event("input", { bubbles: true }));
-		this.input.focus();
 	}
 }

@@ -1,15 +1,22 @@
 import { BasesDataItem } from "./helpers";
-import type { BasesEntry, BasesEntryGroup, BasesPropertyId, BasesView, TFile, Value } from "obsidian";
+import type {
+	BasesEntry,
+	BasesEntryGroup,
+	BasesPropertyId,
+	BasesView,
+	TFile,
+} from "obsidian";
+import { stringifyUnknown } from "../utils/stringUtils";
 
 type BasesViewDataSource = Pick<BasesView, "config" | "data">;
 
-type BasesValueInternals = Value & {
+type BasesValueInternals = {
 	data?: unknown;
 	date?: Date;
 	file?: TFile;
 	value?: unknown[];
-	get?: (index: number) => Value | unknown;
-	at?: (index: number) => Value | unknown;
+	get?: (index: number) => unknown;
+	at?: (index: number) => unknown;
 	length?: () => number;
 	toISOString?: () => string;
 	constructor?: {
@@ -17,7 +24,7 @@ type BasesValueInternals = Value & {
 	};
 };
 
-type BasesEntryInternals = BasesEntry & {
+type BasesEntryInternals = {
 	frontmatter?: Record<string, unknown>;
 	properties?: Record<string, unknown>;
 };
@@ -39,7 +46,7 @@ export class BasesDataAdapter {
 	 */
 	extractDataItems(): BasesDataItem[] {
 		const entries = this.basesView.data.data;
-		return entries.map((entry: BasesEntry) => ({
+			return entries.map((entry) => ({
 			key: entry.file.path,
 			data: entry,
 			file: entry.file,
@@ -120,14 +127,17 @@ export class BasesDataAdapter {
 		}
 	}
 
-
 	/**
 	 * Convert Bases Value object to native JavaScript value.
 	 * Handles: PrimitiveValue, ListValue, DateValue, FileValue, NullValue, etc.
 	 */
-	private convertValueToNative(value: Value | unknown): unknown {
-		const basesValue = value as BasesValueInternals | null | undefined;
-		if (basesValue == null || basesValue.constructor?.name === "NullValue") {
+	private convertValueToNative(value: unknown): unknown {
+			if (value === null || value === undefined) {
+				return null;
+			}
+
+			const basesValue = value as BasesValueInternals;
+			if (basesValue.constructor?.name === "NullValue") {
 			return null;
 		}
 
@@ -137,11 +147,12 @@ export class BasesDataAdapter {
 		}
 
 		// ListValue
-		const getListItem = typeof basesValue.get === "function"
-			? basesValue.get.bind(basesValue)
-			: typeof basesValue.at === "function"
-				? basesValue.at.bind(basesValue)
-				: null;
+		const getListItem =
+			typeof basesValue.get === "function"
+				? basesValue.get.bind(basesValue)
+				: typeof basesValue.at === "function"
+					? basesValue.at.bind(basesValue)
+					: null;
 		if (typeof basesValue.length === "function" && getListItem) {
 			const len = basesValue.length();
 			const result = [];
@@ -166,14 +177,15 @@ export class BasesDataAdapter {
 		// FileValue
 		if (basesValue.file) {
 			return basesValue.file.path;
-		}
-
-		// Fallback: try to extract raw data
-		if (typeof basesValue.toString === "function") {
-			const stringValue = basesValue.toString();
-			if (stringValue !== "[object Object]") {
-				return stringValue;
 			}
+
+			// Fallback: try to extract raw data
+			const toString = Reflect.get(basesValue, "toString");
+			if (typeof toString === "function" && toString !== Object.prototype.toString) {
+				const stringValue = Reflect.apply(toString, basesValue, []);
+				if (stringValue !== "[object Object]") {
+					return stringValue;
+				}
 		}
 
 		return value;
@@ -184,12 +196,16 @@ export class BasesDataAdapter {
 	 * Handles Bases Value objects, particularly DateValue which has special structure.
 	 * For FileValue (links), returns the file path which can be rendered as a clickable link.
 	 */
-	convertGroupKeyToString(key: Value | unknown): string {
-		const basesKey = key as BasesValueInternals | null | undefined;
-		// Check if key exists and is valid
-		if (basesKey == null || basesKey.constructor?.name === "NullValue") {
-			return "Unknown";
-		}
+	convertGroupKeyToString(key: unknown): string {
+			// Check if key exists and is valid
+			if (key === null || key === undefined) {
+				return "Unknown";
+			}
+
+			const basesKey = key as BasesValueInternals;
+			if (basesKey.constructor?.name === "NullValue") {
+				return "Unknown";
+			}
 
 		// Extract the actual value from Bases Value object
 		let actualValue: unknown;
@@ -220,8 +236,8 @@ export class BasesDataAdapter {
 		// Format Date objects as YYYY-MM-DD (date only, no time)
 		if (actualValue instanceof Date) {
 			const year = actualValue.getFullYear();
-			const month = String(actualValue.getMonth() + 1).padStart(2, '0');
-			const day = String(actualValue.getDate()).padStart(2, '0');
+			const month = String(actualValue.getMonth() + 1).padStart(2, "0");
+			const day = String(actualValue.getDate()).padStart(2, "0");
 			return `${year}-${month}-${day}`;
 		}
 
@@ -232,10 +248,10 @@ export class BasesDataAdapter {
 		if (typeof actualValue === "number") return String(actualValue);
 		if (typeof actualValue === "boolean") return actualValue ? "True" : "False";
 		if (Array.isArray(actualValue)) {
-			return actualValue.length > 0 ? actualValue.join(", ") : "None";
+			return actualValue.length > 0 ? actualValue.map(stringifyUnknown).join(", ") : "None";
 		}
 
-		return String(actualValue);
+		return stringifyUnknown(actualValue) || "None";
 	}
 
 	/**
@@ -283,14 +299,16 @@ export class BasesDataAdapter {
 	 * Call this during rendering for visible items only - NOT during bulk extraction.
 	 * This is much more efficient for expensive properties like backlinks.
 	 */
-	getComputedProperty(basesEntry: BasesEntry | null | undefined, propertyId: string): unknown {
-		if (!basesEntry) return null;
+		getComputedProperty(basesEntry: unknown, propertyId: string): unknown {
+			if (!basesEntry || typeof basesEntry !== "object") return null;
 
-		try {
-			const value = basesEntry.getValue(propertyId as BasesPropertyId);
-			return this.convertValueToNative(value);
-		} catch (e) {
-			return null;
+				try {
+					const getValue = (basesEntry as { getValue?: (id: BasesPropertyId) => unknown }).getValue;
+					if (typeof getValue !== "function") return null;
+					const value = getValue.call(basesEntry, propertyId);
+				return this.convertValueToNative(value);
+			} catch {
+				return null;
 		}
 	}
 

@@ -25,8 +25,11 @@ Access these options through the Bases view settings panel:
 - **Swim Lane**: Optional property for horizontal grouping. Creates a two-dimensional layout where tasks are organized by both column (groupBy) and row (swimLane)
 - **Column Width**: Controls the width of columns in pixels. Range: 200-500px. Default: 280px
 - **Hide Empty Columns**: When enabled, columns containing no tasks are hidden from the view
+- **Pinned Columns**: Optional comma-separated list of column values that should stay visible even when empty. This is useful with **Hide Empty Columns** when each board needs a small stable subset of shared statuses or categories
+- **Hide Empty Swimlanes**: When enabled, ordered swimlanes with no tasks are hidden from the view
 - **Show items in multiple columns**: When enabled (default), tasks with multiple values in list properties (contexts, tags, projects) appear in each individual column. For example, a task with `contexts: [work, call]` appears in both the "work" and "call" columns. When disabled, tasks appear in a single combined column (e.g., "work, call")
 - **Column Order**: Managed automatically when dragging column headers. Stores custom column ordering
+- **Swim Lane Order**: Advanced JSON configuration for pinning swimlane rows in a stable order
 A common setup is to keep one board grouped by status and another grouped by project or context, each in a separate `.base` file.
 
 ## Interface Layout
@@ -38,6 +41,7 @@ In standard mode, the Kanban board displays a horizontal row of columns. Each co
 Each column includes:
 - A header showing the property value and task count
 - A scrollable area containing task cards
+- An add button that opens the TaskNotes creation modal with the column value filled in
 - Drag-and-drop functionality for reordering columns or moving tasks between columns
 
 ### Swimlane Layout
@@ -48,6 +52,17 @@ Each swimlane row includes:
 - A label cell showing the swimlane property value and total task count
 - Multiple cells, each representing a column within that swimlane
 - Scrollable cells containing task cards
+- Add buttons inside cells that fill in both the column value and swimlane value
+
+To pin swimlanes in a stable order, set the advanced `swimLaneOrder` option to a JSON object keyed by the swimlane property:
+
+```yaml
+config:
+  swimLane: note.contexts
+  swimLaneOrder: '{"note.contexts":["transitcal","bill","cycles-research","astrolabe"]}'
+```
+
+Listed swimlane values render first in the configured order. Values not listed in `swimLaneOrder` render below them using the default order for status and priority swimlanes, or alphabetically for other properties. If `hideEmptySwimLanes` is disabled, listed values can remain visible even when no matching tasks are currently present.
 
 ## Task Cards
 
@@ -70,6 +85,8 @@ Drag task cards between columns to update the `groupBy` property value. In swiml
 
 When grouping by a list property (contexts, tags, projects) with "Show items in multiple columns" enabled, dragging a task between columns modifies the list rather than replacing it. The source column's value is removed and the target column's value is added. For example, dragging a task from the "work" column to the "home" column changes `contexts: [work, call]` to `contexts: [call, home]`.
 Drag operations write directly to task metadata, so consistent grouping values reduce ambiguity.
+
+The add button at the bottom of a column or swimlane cell keeps deterministic view filter defaults and fills in the grouped values for that location.
 
 ### Manual Reordering Within Columns
 
@@ -118,16 +135,19 @@ views:
       property: task.status
     config:
       swimLane: task.priority
+      swimLaneOrder: '{"task.priority":["high","normal","low"]}'
       columnWidth: 300
       hideEmptyColumns: true
+      pinnedColumns: to-do, in-progress, done
 ---
 ```
 
 This configuration creates a Kanban board with:
 - Columns based on task status
 - Swimlanes based on task priority
+- Priority swimlanes pinned in high, normal, low order
 - 300px column width
-- Empty columns hidden
+- Empty unpinned columns hidden, while the to-do, in-progress, and done columns stay visible as drop targets
 
 ## Filtering and Sorting
 

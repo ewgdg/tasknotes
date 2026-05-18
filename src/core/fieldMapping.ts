@@ -1,5 +1,5 @@
-/* eslint-disable no-console */
-import { FieldMapping, TaskInfo } from "../types";
+ 
+import { FieldMapping, PriorityConfig, Reminder, StatusConfig, TaskInfo, TimeEntry } from "../types";
 import type { UserMappedField } from "../types/settings";
 import {
 	normalizeDependencyEntry,
@@ -7,6 +7,7 @@ import {
 	serializeDependencies,
 } from "../utils/dependencyUtils";
 import { validateCompleteInstances } from "../utils/dateUtils";
+import { stringifyUnknown } from "../utils/stringUtils";
 
 export function toUserField(mapping: FieldMapping, internalName: keyof FieldMapping): string {
 	return mapping[internalName];
@@ -17,15 +18,125 @@ export function normalizeTitleValue(val: unknown): string | undefined {
 	if (Array.isArray(val)) return val.map((v) => String(v)).join(", ");
 	if (val === null || val === undefined) return undefined;
 	if (typeof val === "object") return "";
-	return String(val);
+	if (typeof val === "number" || typeof val === "boolean") return String(val);
+	return undefined;
+}
+
+function titleFromFilePath(filePath: string): string | undefined {
+	const filename = filePath.split("/").pop()?.replace(/\.md$/i, "").trim();
+	return filename || undefined;
+}
+
+function normalizeStringValue(value: unknown): string | undefined {
+	if (value === null || value === undefined) return undefined;
+	if (typeof value === "string") return value;
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	return undefined;
+}
+
+type ConfiguredValue = {
+	value: string;
+	label: string;
+};
+
+function findUniqueConfiguredValue<T extends ConfiguredValue>(
+	configs: readonly T[],
+	matches: (config: T) => boolean
+): T | undefined {
+	const matched = configs.filter(matches);
+	return matched.length === 1 ? matched[0] : undefined;
+}
+
+function normalizeConfiguredValue(
+	rawValue: string | undefined,
+	configs: readonly ConfiguredValue[] = []
+): string | undefined {
+	if (rawValue === undefined || configs.length === 0) {
+		return rawValue;
+	}
+
+	const exactValue = configs.find((config) => config.value === rawValue);
+	if (exactValue) {
+		return exactValue.value;
+	}
+
+	const exactLabel = findUniqueConfiguredValue(configs, (config) => config.label === rawValue);
+	if (exactLabel) {
+		return exactLabel.value;
+	}
+
+	const normalized = rawValue.trim().toLocaleLowerCase();
+	if (normalized.length === 0) {
+		return rawValue;
+	}
+
+	const caseInsensitiveValue = findUniqueConfiguredValue(
+		configs,
+		(config) => config.value.trim().toLocaleLowerCase() === normalized
+	);
+	if (caseInsensitiveValue) {
+		return caseInsensitiveValue.value;
+	}
+
+	const caseInsensitiveLabel = findUniqueConfiguredValue(
+		configs,
+		(config) => config.label.trim().toLocaleLowerCase() === normalized
+	);
+	if (caseInsensitiveLabel) {
+		return caseInsensitiveLabel.value;
+	}
+
+	return rawValue;
+}
+
+export function normalizeStatusConfigValue(
+	value: unknown,
+	statuses: readonly StatusConfig[] = []
+): string | undefined {
+	return normalizeConfiguredValue(normalizeStringValue(value), statuses);
+}
+
+export function normalizePriorityConfigValue(
+	value: unknown,
+	priorities: readonly PriorityConfig[] = []
+): string | undefined {
+	return normalizeConfiguredValue(normalizeStringValue(value), priorities);
+}
+
+function normalizeStringArrayValue(value: unknown): string[] {
+	if (Array.isArray(value)) return value.map(String);
+	return [String(value)];
+}
+
+function normalizeNumberValue(value: unknown): number | undefined {
+	if (typeof value === "number") return value;
+	if (typeof value === "string" && value.trim() !== "") {
+		const parsed = Number(value);
+		return Number.isNaN(parsed) ? undefined : parsed;
+	}
+	return undefined;
+}
+
+function normalizeTimeEntries(value: unknown): TimeEntry[] {
+	return Array.isArray(value) ? (value as TimeEntry[]) : [];
+}
+
+function normalizeReminders(value: unknown): Reminder[] | undefined {
+	if (Array.isArray(value)) {
+		const filtered = value.filter((reminder) => reminder != null) as Reminder[];
+		return filtered.length > 0 ? filtered : undefined;
+	}
+	return value != null ? [value as Reminder] : undefined;
 }
 
 export function mapTaskFromFrontmatter(
 	mapping: FieldMapping,
-	frontmatter: Record<string, any> | undefined | null,
+	frontmatter: Record<string, unknown> | undefined | null,
 	filePath: string,
 	storeTitleInFilename?: boolean,
-	userFields: UserMappedField[] = []
+	userFields: UserMappedField[] = [],
+	statuses: readonly StatusConfig[] = [],
+	priorities: readonly PriorityConfig[] = []
 ): Partial<TaskInfo> {
 	if (!frontmatter) return {};
 
@@ -35,53 +146,55 @@ export function mapTaskFromFrontmatter(
 
 	if (frontmatter[mapping.title] !== undefined) {
 		const normalized = normalizeTitleValue(frontmatter[mapping.title]);
-		if (normalized !== undefined) {
+		if (normalized !== undefined && normalized.trim().length > 0) {
 			mapped.title = normalized;
+		} else {
+			const fallbackTitle = titleFromFilePath(filePath);
+			if (fallbackTitle) {
+				mapped.title = fallbackTitle;
+			}
 		}
-	} else if (storeTitleInFilename) {
-		const filename = filePath.split("/").pop()?.replace(".md", "");
-		if (filename) {
-			mapped.title = filename;
+	} else {
+		const fallbackTitle = titleFromFilePath(filePath);
+		if (fallbackTitle) {
+			mapped.title = fallbackTitle;
 		}
 	}
 
 	if (frontmatter[mapping.status] !== undefined) {
-		const statusValue = frontmatter[mapping.status];
-		mapped.status = typeof statusValue === "boolean" ? (statusValue ? "true" : "false") : statusValue;
+		mapped.status = normalizeStatusConfigValue(frontmatter[mapping.status], statuses);
 	}
 
 	if (frontmatter[mapping.priority] !== undefined) {
-		mapped.priority = frontmatter[mapping.priority];
+		mapped.priority = normalizePriorityConfigValue(frontmatter[mapping.priority], priorities);
 	}
 
 	if (frontmatter[mapping.due] !== undefined) {
-		mapped.due = frontmatter[mapping.due];
+		mapped.due = normalizeStringValue(frontmatter[mapping.due]);
 	}
 
 	if (frontmatter[mapping.scheduled] !== undefined) {
-		mapped.scheduled = frontmatter[mapping.scheduled];
+		mapped.scheduled = normalizeStringValue(frontmatter[mapping.scheduled]);
 	}
 
 	if (frontmatter[mapping.contexts] !== undefined) {
-		const contexts = frontmatter[mapping.contexts];
-		mapped.contexts = Array.isArray(contexts) ? contexts : [contexts];
+		mapped.contexts = normalizeStringArrayValue(frontmatter[mapping.contexts]);
 	}
 
 	if (frontmatter[mapping.projects] !== undefined) {
-		const projects = frontmatter[mapping.projects];
-		mapped.projects = Array.isArray(projects) ? projects : [projects];
+		mapped.projects = normalizeStringArrayValue(frontmatter[mapping.projects]);
 	}
 
 	if (frontmatter[mapping.timeEstimate] !== undefined) {
-		mapped.timeEstimate = frontmatter[mapping.timeEstimate];
+		mapped.timeEstimate = normalizeNumberValue(frontmatter[mapping.timeEstimate]);
 	}
 
 	if (frontmatter[mapping.completedDate] !== undefined) {
-		mapped.completedDate = frontmatter[mapping.completedDate];
+		mapped.completedDate = normalizeStringValue(frontmatter[mapping.completedDate]);
 	}
 
 	if (frontmatter[mapping.recurrence] !== undefined) {
-		mapped.recurrence = frontmatter[mapping.recurrence];
+		mapped.recurrence = normalizeStringValue(frontmatter[mapping.recurrence]);
 	}
 
 	if (frontmatter[mapping.recurrenceAnchor] !== undefined) {
@@ -89,30 +202,37 @@ export function mapTaskFromFrontmatter(
 		if (anchorValue === "scheduled" || anchorValue === "completion") {
 			mapped.recurrence_anchor = anchorValue;
 		} else {
-			console.warn(`Invalid recurrence_anchor value: ${anchorValue}, defaulting to 'scheduled'`);
+			console.warn(
+				`Invalid recurrence_anchor value: ${stringifyUnknown(anchorValue)}, defaulting to 'scheduled'`
+			);
 			mapped.recurrence_anchor = "scheduled";
 		}
 	}
 
 	if (frontmatter[mapping.dateCreated] !== undefined) {
-		mapped.dateCreated = frontmatter[mapping.dateCreated];
+		mapped.dateCreated = normalizeStringValue(frontmatter[mapping.dateCreated]);
 	}
 
 	if (frontmatter[mapping.dateModified] !== undefined) {
-		mapped.dateModified = frontmatter[mapping.dateModified];
+		mapped.dateModified = normalizeStringValue(frontmatter[mapping.dateModified]);
 	}
 
 	if (frontmatter[mapping.timeEntries] !== undefined) {
-		const timeEntriesValue = frontmatter[mapping.timeEntries];
-		mapped.timeEntries = Array.isArray(timeEntriesValue) ? timeEntriesValue : [];
+		mapped.timeEntries = normalizeTimeEntries(frontmatter[mapping.timeEntries]);
 	}
 
 	if (frontmatter[mapping.completeInstances] !== undefined) {
-		mapped.complete_instances = validateCompleteInstances(frontmatter[mapping.completeInstances]);
+		const completeInstances = frontmatter[mapping.completeInstances];
+		mapped.complete_instances = validateCompleteInstances(
+			Array.isArray(completeInstances) ? completeInstances : [completeInstances]
+		);
 	}
 
 	if (frontmatter[mapping.skippedInstances] !== undefined) {
-		mapped.skipped_instances = validateCompleteInstances(frontmatter[mapping.skippedInstances]);
+		const skippedInstances = frontmatter[mapping.skippedInstances];
+		mapped.skipped_instances = validateCompleteInstances(
+			Array.isArray(skippedInstances) ? skippedInstances : [skippedInstances]
+		);
 	}
 
 	if (mapping.blockedBy && frontmatter[mapping.blockedBy] !== undefined) {
@@ -123,24 +243,15 @@ export function mapTaskFromFrontmatter(
 	}
 
 	if (frontmatter[mapping.icsEventId] !== undefined) {
-		const icsEventId = frontmatter[mapping.icsEventId];
-		mapped.icsEventId = Array.isArray(icsEventId) ? icsEventId : [icsEventId];
+		mapped.icsEventId = normalizeStringArrayValue(frontmatter[mapping.icsEventId]);
 	}
 
 	if (frontmatter[mapping.googleCalendarEventId] !== undefined) {
-		mapped.googleCalendarEventId = frontmatter[mapping.googleCalendarEventId];
+		mapped.googleCalendarEventId = normalizeStringValue(frontmatter[mapping.googleCalendarEventId]);
 	}
 
 	if (frontmatter[mapping.reminders] !== undefined) {
-		const reminders = frontmatter[mapping.reminders];
-		if (Array.isArray(reminders)) {
-			const filteredReminders = reminders.filter((r) => r != null);
-			if (filteredReminders.length > 0) {
-				mapped.reminders = filteredReminders;
-			}
-		} else if (reminders != null) {
-			mapped.reminders = [reminders];
-		}
+		mapped.reminders = normalizeReminders(frontmatter[mapping.reminders]);
 	}
 
 	if (frontmatter[mapping.sortOrder] !== undefined) {
@@ -149,16 +260,25 @@ export function mapTaskFromFrontmatter(
 	}
 
 	if (frontmatter.tags && Array.isArray(frontmatter.tags)) {
-		mapped.tags = frontmatter.tags;
+		mapped.tags = frontmatter.tags.map(String);
 		mapped.archived = frontmatter.tags.includes(mapping.archiveTag);
 	}
 
 	if (userFields.length > 0) {
-		const mappedAny = mapped as Record<string, any>;
+		const mappedAny = mapped as Record<string, unknown>;
+		const customProperties: Record<string, unknown> = {};
 		for (const field of userFields) {
 			if (frontmatter[field.key] !== undefined) {
-				mappedAny[field.key] = frontmatter[field.key];
+				const value = frontmatter[field.key];
+				mappedAny[field.key] = value;
+				customProperties[field.key] = value;
 			}
+		}
+		if (Object.keys(customProperties).length > 0) {
+			mapped.customProperties = {
+				...mapped.customProperties,
+				...customProperties,
+			};
 		}
 	}
 
@@ -171,10 +291,10 @@ export function mapTaskToFrontmatter(
 	taskTag?: string,
 	storeTitleInFilename?: boolean,
 	userFields: UserMappedField[] = []
-): Record<string, any> {
-	const frontmatter: Record<string, any> = {};
+): Record<string, unknown> {
+	const frontmatter: Record<string, unknown> = {};
 
-	if (taskData.title !== undefined) {
+	if (taskData.title !== undefined && !storeTitleInFilename) {
 		frontmatter[mapping.title] = taskData.title;
 	}
 
@@ -289,15 +409,24 @@ export function mapTaskToFrontmatter(
 	}
 
 	if (userFields.length > 0) {
-		const taskAny = taskData as Record<string, any>;
+		const taskAny = taskData as Record<string, unknown>;
+		const customProperties = taskData.customProperties;
 		for (const field of userFields) {
-			if (Object.prototype.hasOwnProperty.call(taskAny, field.key) && taskAny[field.key] !== undefined) {
+			const hasTopLevelUserField =
+				Object.prototype.hasOwnProperty.call(taskAny, field.key) &&
+				taskAny[field.key] !== undefined;
+			const hasCustomProperty =
+				customProperties &&
+				Object.prototype.hasOwnProperty.call(customProperties, field.key) &&
+				customProperties[field.key] !== undefined;
+
+			if (hasTopLevelUserField) {
 				frontmatter[field.key] = taskAny[field.key];
+			} else if (hasCustomProperty) {
+				frontmatter[field.key] = customProperties[field.key];
 			}
 		}
 	}
-
-	void storeTitleInFilename;
 
 	return frontmatter;
 }

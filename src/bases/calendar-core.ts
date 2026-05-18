@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- FullCalendar callbacks provide checked DOM references after mount. */
 /**
  * Shared Calendar Core Logic
  *
@@ -19,12 +19,23 @@ import {
 	parseDateToUTC,
 	getTodayLocal,
 } from "../utils/dateUtils";
-import { generateRecurringInstances, updateTimeblockInDailyNote, addDTSTARTToRecurrenceRuleWithDraggedTime } from "../utils/helpers";
-import { Notice } from "obsidian";
-import { getAllDailyNotes, getDailyNote, appHasDailyNotesPluginLoaded, createDailyNote } from "obsidian-daily-notes-interface";
+import {
+	generateRecurringInstances,
+	updateTimeblockInDailyNote,
+	addDTSTARTToRecurrenceRuleWithDraggedTime,
+} from "../utils/helpers";
+import { Notice, TFile } from "obsidian";
+import {
+	getAllDailyNotes,
+	getDailyNote,
+	appHasDailyNotesPluginLoaded,
+	createDailyNote,
+} from "obsidian-daily-notes-interface";
 import { TimeblockCreationModal } from "../modals/TimeblockCreationModal";
 import { openTaskSelector } from "../modals/TaskSelectorWithCreateModal";
 import { TimeblockInfoModal } from "../modals/TimeblockInfoModal";
+
+const MIN_EXTERNAL_TIMED_EVENT_DURATION_MS = 1;
 
 export interface CalendarEvent {
 	id: string;
@@ -40,10 +51,20 @@ export interface CalendarEvent {
 		taskInfo?: TaskInfo;
 		icsEvent?: ICSEvent;
 		timeblock?: TimeBlock;
-		eventType: "scheduled" | "due" | "scheduledToDueSpan" | "timeEntry" | "recurring" | "ics" | "timeblock" | "property-based";
+		eventType:
+			| "scheduled"
+			| "due"
+			| "scheduledToDueSpan"
+			| "timeEntry"
+			| "recurring"
+			| "ics"
+			| "timeblock"
+			| "property-based";
 		filePath?: string; // For property-based events
-		file?: any; // For property-based events
-		basesEntry?: any; // For property-based events - full Bases entry with getValue()
+		file?: unknown; // For property-based events
+		basesEntry?: unknown; // For property-based events - full Bases entry with getValue()
+		propertyEventIndex?: number; // For list-backed property-based events
+		propertyEventFromList?: boolean; // Prevents scalar writes to list-backed events
 		isCompleted?: boolean;
 		isSkipped?: boolean;
 		isRecurringInstance?: boolean;
@@ -56,7 +77,48 @@ export interface CalendarEvent {
 		isMicrosoftCalendar?: boolean; // For Microsoft Calendar events
 		timeEntryIndex?: number;
 		originalDate?: string; // For timeblock events - tracks original date for move operations
+		relatedNoteCount?: number; // For calendar events linked to notes/tasks
 	};
+}
+
+export interface ICSEventRenderOptions {
+	relatedNoteCount?: number;
+}
+
+type CalendarEventLike = {
+	start?: Date | null;
+	end?: Date | null;
+	allDay?: boolean;
+	extendedProps?: Record<string, unknown> & Partial<CalendarEvent["extendedProps"]>;
+};
+
+type CalendarEventArgLike = {
+	event?: CalendarEventLike;
+	start?: Date;
+	extendedProps?: Partial<CalendarEvent["extendedProps"]>;
+};
+
+type CalendarMutationInfo = {
+	event: CalendarEventLike;
+	revert: () => void;
+};
+
+type FrontmatterWithTimeblocks = {
+	timeblocks?: unknown[];
+};
+
+type ObsidianMoment = import("moment").Moment;
+
+type WindowWithMoment = Window & {
+	moment(input?: string | Date): ObsidianMoment;
+};
+
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function getWindowMoment(input?: string | Date): ObsidianMoment {
+	return (window as unknown as WindowWithMoment).moment(input);
 }
 
 export interface CalendarEventGenerationOptions {
@@ -65,10 +127,17 @@ export interface CalendarEventGenerationOptions {
 	showScheduledToDueSpan?: boolean;
 	showTimeEntries?: boolean;
 	showRecurring?: boolean;
+	showCompletedRecurringInstances?: boolean;
+	showSkippedRecurringInstances?: boolean;
 	showICSEvents?: boolean;
 	showTimeblocks?: boolean;
 	visibleStart?: Date;
 	visibleEnd?: Date;
+}
+
+interface RecurringInstanceVisibilityOptions {
+	showCompletedRecurringInstances?: boolean;
+	showSkippedRecurringInstances?: boolean;
 }
 
 /**
@@ -96,7 +165,7 @@ export function hexToRgba(hex: string, alpha: number): string {
  * Uses activeDocument to support pop-out windows
  */
 export function isDarkMode(): boolean {
-	return activeDocument.body.classList.contains('theme-dark');
+	return activeDocument.body.classList.contains("theme-dark");
 }
 
 /**
@@ -105,10 +174,10 @@ export function isDarkMode(): boolean {
  */
 export function getEventTextColor(useThemeColor = false): string {
 	if (useThemeColor) {
-		return isDarkMode() ? '#e8eaed' : '#202124'; // Light text in dark mode, dark text in light mode
+		return isDarkMode() ? "#e8eaed" : "#202124"; // Light text in dark mode, dark text in light mode
 	}
 	// For non-themed events, return empty (use border color)
-	return '';
+	return "";
 }
 
 /**
@@ -168,34 +237,45 @@ export function applyRecurringTaskStyling(
 
 	if (isNextScheduledOccurrence) {
 		// Next scheduled occurrence: Normal task styling (solid border, full opacity)
-		element.style.borderStyle = "solid";
-		element.style.borderWidth = "2px";
+		element.classList.remove("tn-static-border-style-dashed-12296c91");
+		element.classList.add("tn-static-border-style-solid-11080b69");
+		element.classList.add("tn-static-border-width-2px-a1222254");
 		element.setAttribute("data-next-scheduled", "true");
 		element.classList.add("fc-next-scheduled-event");
 
 		// Apply dimmed appearance for completed instances
 		if (isCompleted) {
-			element.style.opacity = "0.6";
+			element.classList.remove(
+				"tn-static-opacity-0-8d919cb5",
+				"tn-static-opacity-1-c6e7979d"
+			);
+			element.classList.add("tn-static-opacity-0-6-d95b59ac");
 		}
 	} else if (isPatternInstance) {
 		// Pattern occurrences: Recurring preview styling (dashed border, reduced opacity)
-		element.style.borderStyle = "dashed";
-		element.style.borderWidth = "2px";
+		element.classList.remove("tn-static-border-style-solid-11080b69");
+		element.classList.add("tn-static-border-style-dashed-12296c91");
+		element.classList.add("tn-static-border-width-2px-a1222254");
 		element.style.opacity = isCompleted ? "0.4" : "0.7"; // Reduced opacity for pattern instances
 
 		element.setAttribute("data-pattern-instance", "true");
 		element.classList.add("fc-pattern-instance-event");
 	} else if (isRecurringInstance) {
 		// Legacy recurring instances (for backward compatibility)
-		element.style.borderStyle = "dashed";
-		element.style.borderWidth = "2px";
+		element.classList.remove("tn-static-border-style-solid-11080b69");
+		element.classList.add("tn-static-border-style-dashed-12296c91");
+		element.classList.add("tn-static-border-width-2px-a1222254");
 
 		element.setAttribute("data-recurring", "true");
 		element.classList.add("fc-recurring-event");
 
 		// Apply dimmed appearance for completed instances
 		if (isCompleted) {
-			element.style.opacity = "0.6";
+			element.classList.remove(
+				"tn-static-opacity-0-8d919cb5",
+				"tn-static-opacity-1-c6e7979d"
+			);
+			element.classList.add("tn-static-opacity-0-6-d95b59ac");
 		}
 	}
 
@@ -203,10 +283,16 @@ export function applyRecurringTaskStyling(
 	if (isCompleted) {
 		const titleElement = element.querySelector(".fc-event-title, .fc-event-title-container");
 		if (titleElement) {
-			(titleElement as HTMLElement).style.textDecoration = "line-through";
+			(titleElement as HTMLElement).classList.remove(
+				"tn-static-text-decoration-none-80d654f9"
+			);
+			(titleElement as HTMLElement).classList.add(
+				"tn-static-text-decoration-line-through-7059a4e5"
+			);
 		} else {
 			// Fallback: apply to the entire event element
-			element.style.textDecoration = "line-through";
+			element.classList.remove("tn-static-text-decoration-none-80d654f9");
+			element.classList.add("tn-static-text-decoration-line-through-7059a4e5");
 		}
 		element.classList.add("fc-completed-event");
 	}
@@ -284,18 +370,19 @@ export async function handlePatternInstanceDrop(
  * Handle dropping a recurring task event (next scheduled, pattern, or legacy)
  */
 export async function handleRecurringTaskDrop(
-	dropInfo: any,
+	dropInfo: CalendarMutationInfo,
 	taskInfo: TaskInfo,
 	plugin: TaskNotesPlugin
 ): Promise<void> {
-	const {
-		isRecurringInstance,
-		isNextScheduledOccurrence,
-		isPatternInstance,
-	} = dropInfo.event.extendedProps;
+	const { isRecurringInstance, isNextScheduledOccurrence, isPatternInstance } =
+		dropInfo.event.extendedProps ?? {};
 
 	const newStart = dropInfo.event.start;
-	const allDay = dropInfo.event.allDay;
+	if (!newStart) {
+		dropInfo.revert();
+		return;
+	}
+	const allDay = dropInfo.event.allDay ?? false;
 
 	if (isNextScheduledOccurrence) {
 		// Dragging Next Scheduled Occurrence: Updates only task.scheduled (manual reschedule)
@@ -336,17 +423,13 @@ export async function handleRecurringTaskDrop(
  * Get target date for calendar event context menu
  * Uses the same UTC-anchored logic as AdvancedCalendarView
  */
-export function getTargetDateForEvent(eventArg: any): Date {
-
+export function getTargetDateForEvent(eventArg: unknown): Date {
 	// Extract from eventArg.event if it's an event mount arg, or directly if it's the event
-	const event = eventArg.event || eventArg;
+	const eventContainer = eventArg as CalendarEventArgLike;
+	const event = eventContainer.event || eventContainer;
 	const extendedProps = event.extendedProps || {};
-	const {
-		isRecurringInstance,
-		isNextScheduledOccurrence,
-		isPatternInstance,
-		instanceDate,
-	} = extendedProps;
+	const { isRecurringInstance, isNextScheduledOccurrence, isPatternInstance, instanceDate } =
+		extendedProps;
 
 	// For recurring tasks, use UTC anchor for instance date (matches AdvancedCalendarView)
 	if ((isRecurringInstance || isNextScheduledOccurrence || isPatternInstance) && instanceDate) {
@@ -369,24 +452,37 @@ export function getTargetDateForEvent(eventArg: any): Date {
 /**
  * Calculate all-day end date based on time estimate
  */
-export function calculateAllDayEndDate(startDate: string, timeEstimate?: number): string | undefined {
+export function calculateAllDayEndDate(
+	startDate: string,
+	timeEstimate?: number
+): string | undefined {
 	if (!timeEstimate) return undefined;
 
 	// For all-day events, add days based on time estimate (24 hours = 1 day)
 	const days = Math.ceil(timeEstimate / (24 * 60));
 	const start = parseDateToUTC(startDate);
-	const end = new Date(Date.UTC(
-		start.getUTCFullYear(),
-		start.getUTCMonth(),
-		start.getUTCDate() + days
-	));
+	const end = new Date(
+		Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + days)
+	);
 	return formatDateForStorage(end);
+}
+
+export function shiftTaskDatePreservingTime(dateValue: string, timeDiffMs: number): string {
+	const oldDate = parseDateToLocal(dateValue);
+	const shiftedDate = new Date(oldDate.getTime() + timeDiffMs);
+
+	return hasTimeComponent(dateValue)
+		? format(shiftedDate, "yyyy-MM-dd'T'HH:mm")
+		: format(shiftedDate, "yyyy-MM-dd");
 }
 
 /**
  * Create scheduled event from task
  */
-export function createScheduledEvent(task: TaskInfo, plugin: TaskNotesPlugin): CalendarEvent | null {
+export function createScheduledEvent(
+	task: TaskInfo,
+	plugin: TaskNotesPlugin
+): CalendarEvent | null {
 	if (!task.scheduled) return null;
 
 	const hasTime = hasTimeComponent(task.scheduled);
@@ -450,7 +546,7 @@ export function createDueEvent(task: TaskInfo, plugin: TaskNotesPlugin): Calenda
 
 	return {
 		id: `due-${task.path}`,
-		title: `DUE: ${task.title}`,
+		title: task.title,
 		start: startDate,
 		end: endDate,
 		allDay: !hasTime,
@@ -467,10 +563,13 @@ export function createDueEvent(task: TaskInfo, plugin: TaskNotesPlugin): Calenda
 }
 
 /**
- * Create a spanning event from scheduled date to due date.
+ * Create a date-only spanning event from scheduled date to due date.
  * Shows the task as a multi-day bar from when work starts to when it's due.
  */
-export function createScheduledToDueSpanEvent(task: TaskInfo, plugin: TaskNotesPlugin): CalendarEvent | null {
+function createAllDayScheduledToDueSpanEvent(
+	task: TaskInfo,
+	plugin: TaskNotesPlugin
+): CalendarEvent | null {
 	if (!task.scheduled || !task.due) return null;
 
 	// Parse dates to compare them
@@ -509,6 +608,115 @@ export function createScheduledToDueSpanEvent(task: TaskInfo, plugin: TaskNotesP
 	};
 }
 
+function isCalendarEventInVisibleRange(
+	event: CalendarEvent,
+	visibleStart?: Date,
+	visibleEnd?: Date
+): boolean {
+	if (!visibleStart || !visibleEnd) return true;
+
+	const eventStart = parseDateToLocal(event.start);
+	const eventEnd = event.end ? parseDateToLocal(event.end) : eventStart;
+
+	return (
+		eventStart.getTime() < visibleEnd.getTime() &&
+		eventEnd.getTime() >= visibleStart.getTime()
+	);
+}
+
+function createTimedScheduledToDueSpanEvents(
+	task: TaskInfo,
+	plugin: TaskNotesPlugin,
+	visibleStart?: Date,
+	visibleEnd?: Date
+): CalendarEvent[] {
+	if (!task.scheduled || !task.due) return [];
+
+	const scheduledDate = parseDateToLocal(task.scheduled);
+	const dueDate = parseDateToLocal(task.due);
+	if (dueDate <= scheduledDate) return [];
+
+	const scheduledTime = getTimePart(task.scheduled);
+	if (!scheduledTime) return [];
+
+	const [hours, minutes] = scheduledTime.split(":").map(Number);
+	const firstDate = parseDateToLocal(getDatePart(task.scheduled));
+	const lastDate = parseDateToLocal(getDatePart(task.due));
+
+	const priorityConfig = plugin.priorityManager.getPriorityConfig(task.priority);
+	const borderColor = priorityConfig?.color || "var(--color-accent)";
+	const fadedBackground = hexToRgba(borderColor, 0.2);
+	const isCompleted = plugin.statusManager.isCompletedStatus(task.status);
+	const textColor = isCssVariable(borderColor) ? getEventTextColor(true) : borderColor;
+
+	const events: CalendarEvent[] = [];
+	for (
+		const day = new Date(firstDate);
+		day.getTime() <= lastDate.getTime();
+		day.setDate(day.getDate() + 1)
+	) {
+		const start = new Date(day);
+		start.setHours(hours, minutes, 0, 0);
+
+		let end: string | undefined;
+		if (task.timeEstimate) {
+			const endDate = new Date(start.getTime() + task.timeEstimate * 60 * 1000);
+			end = format(endDate, "yyyy-MM-dd'T'HH:mm");
+		}
+
+		const instanceDate = format(day, "yyyy-MM-dd");
+		const event: CalendarEvent = {
+			id: `span-${task.path}-${instanceDate}`,
+			title: task.title,
+			start: format(start, "yyyy-MM-dd'T'HH:mm"),
+			end,
+			allDay: false,
+			backgroundColor: fadedBackground,
+			borderColor: borderColor,
+			textColor: textColor,
+			editable: true,
+			extendedProps: {
+				taskInfo: task,
+				eventType: "scheduledToDueSpan",
+				isCompleted: isCompleted,
+			},
+		};
+
+		if (isCalendarEventInVisibleRange(event, visibleStart, visibleEnd)) {
+			events.push(event);
+		}
+	}
+
+	return events;
+}
+
+export function createScheduledToDueSpanEvents(
+	task: TaskInfo,
+	plugin: TaskNotesPlugin,
+	visibleStart?: Date,
+	visibleEnd?: Date
+): CalendarEvent[] {
+	if (!task.scheduled || !task.due) return [];
+
+	if (hasTimeComponent(task.scheduled)) {
+		return createTimedScheduledToDueSpanEvents(task, plugin, visibleStart, visibleEnd);
+	}
+
+	const spanEvent = createAllDayScheduledToDueSpanEvent(task, plugin);
+	if (!spanEvent || !isCalendarEventInVisibleRange(spanEvent, visibleStart, visibleEnd)) {
+		return [];
+	}
+
+	return [spanEvent];
+}
+
+export function createScheduledToDueSpanEvent(
+	task: TaskInfo,
+	plugin: TaskNotesPlugin
+): CalendarEvent | null {
+	return createScheduledToDueSpanEvents(task, plugin)[0] ?? null;
+}
+
 /**
  * Create time entry events from task
  */
@@ -539,7 +747,11 @@ export function createTimeEntryEvents(task: TaskInfo, plugin: TaskNotesPlugin): 
 /**
  * Create ICS calendar event (supports ICS subscriptions, Google Calendar, and Microsoft Calendar)
  */
-export function createICSEvent(icsEvent: ICSEvent, plugin: TaskNotesPlugin): CalendarEvent | null {
+export function createICSEvent(
+	icsEvent: ICSEvent,
+	plugin: TaskNotesPlugin,
+	options: ICSEventRenderOptions = {}
+): CalendarEvent | null {
 	try {
 		// Check if this is a Google Calendar or Microsoft Calendar event
 		const isGoogleCalendar = icsEvent.subscriptionId.startsWith("google-");
@@ -578,11 +790,17 @@ export function createICSEvent(icsEvent: ICSEvent, plugin: TaskNotesPlugin): Cal
 			subscriptionName = subscription.name;
 		}
 
+		const { start, end } = normalizeExternalTimedEventRange(
+			icsEvent.start,
+			icsEvent.end,
+			icsEvent.allDay
+		);
+
 		return {
 			id: icsEvent.id,
 			title: icsEvent.title,
-			start: icsEvent.start,
-			end: icsEvent.end,
+			start,
+			end,
 			allDay: icsEvent.allDay,
 			backgroundColor: backgroundColor,
 			borderColor: borderColor,
@@ -594,12 +812,70 @@ export function createICSEvent(icsEvent: ICSEvent, plugin: TaskNotesPlugin): Cal
 				subscriptionName: subscriptionName,
 				isGoogleCalendar: isGoogleCalendar,
 				isMicrosoftCalendar: isMicrosoftCalendar,
+				relatedNoteCount:
+					options.relatedNoteCount && options.relatedNoteCount > 0
+						? options.relatedNoteCount
+						: undefined,
 			},
 		};
 	} catch (error) {
 		console.error("Error creating ICS event:", error);
 		return null;
 	}
+}
+
+/**
+ * FullCalendar list views can render a timed external event under multiple day
+ * headers when the provider supplies a true zero-duration range (end === start).
+ * Clamp those point-in-time external events to a minimal positive duration
+ * before handing them to FullCalendar, while preserving the raw provider event
+ * unchanged in extendedProps for display and debugging.
+ */
+function normalizeExternalTimedEventRange(
+	start: string,
+	end: string | undefined,
+	allDay: boolean
+): { start: string; end?: string } {
+	if (allDay || !end) {
+		return { start, end };
+	}
+
+	const startDate = new Date(start);
+	const endDate = new Date(end);
+
+	if (
+		Number.isNaN(startDate.getTime()) ||
+		Number.isNaN(endDate.getTime()) ||
+		endDate.getTime() !== startDate.getTime()
+	) {
+		return { start, end };
+	}
+
+	const normalizedEnd = new Date(endDate.getTime() + MIN_EXTERNAL_TIMED_EVENT_DURATION_MS);
+	return {
+		start,
+		end: formatExternalTimedEventEnd(normalizedEnd, end),
+	};
+}
+
+function formatExternalTimedEventEnd(date: Date, originalEnd: string): string {
+	if (/Z$/i.test(originalEnd)) {
+		return date.toISOString();
+	}
+
+	const offsetMatch = originalEnd.match(/([+-])(\d{2}):?(\d{2})$/);
+	if (offsetMatch) {
+		const [, sign, hours, minutes] = offsetMatch;
+		const offsetMinutes = Number(hours) * 60 + Number(minutes);
+		const offsetMs = offsetMinutes * 60 * 1000 * (sign === "+" ? 1 : -1);
+		const shifted = new Date(date.getTime() + offsetMs);
+		const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+		const datePart = `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+		const timePart = `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}.${pad(shifted.getUTCMilliseconds(), 3)}`;
+		return `${datePart}T${timePart}${sign}${hours}:${minutes}`;
+	}
+
+	return format(date, "yyyy-MM-dd'T'HH:mm:ss.SSS");
 }
 
 /**
@@ -751,12 +1027,17 @@ export function generateRecurringTaskInstances(
 	task: TaskInfo,
 	startDate: Date,
 	endDate: Date,
-	plugin: TaskNotesPlugin
+	plugin: TaskNotesPlugin,
+	options: RecurringInstanceVisibilityOptions = {}
 ): CalendarEvent[] {
 	if (!task.recurrence || !task.scheduled) {
 		return [];
 	}
 
+	const {
+		showCompletedRecurringInstances = true,
+		showSkippedRecurringInstances = true,
+	} = options;
 	const instances: CalendarEvent[] = [];
 	const hasOriginalTime = hasTimeComponent(task.scheduled);
 	const templateTime = getRecurringTime(task);
@@ -774,7 +1055,15 @@ export function generateRecurringTaskInstances(
 		scheduledTime || "09:00",
 		plugin
 	);
-	if (nextScheduledEvent) {
+	if (
+		nextScheduledEvent &&
+		shouldShowRecurringInstance(
+			task,
+			nextScheduledDate,
+			showCompletedRecurringInstances,
+			showSkippedRecurringInstances
+		)
+	) {
 		instances.push(nextScheduledEvent);
 	}
 
@@ -807,6 +1096,17 @@ export function generateRecurringTaskInstances(
 			continue;
 		}
 
+		if (
+			!shouldShowRecurringInstance(
+				task,
+				instanceDate,
+				showCompletedRecurringInstances,
+				showSkippedRecurringInstances
+			)
+		) {
+			continue;
+		}
+
 		const eventStart = hasOriginalTime ? `${instanceDate}T${templateTime}` : instanceDate;
 		const event = createRecurringEvent(task, eventStart, instanceDate, templateTime, plugin);
 		if (event) instances.push(event);
@@ -815,10 +1115,31 @@ export function generateRecurringTaskInstances(
 	return instances;
 }
 
+function shouldShowRecurringInstance(
+	task: TaskInfo,
+	instanceDate: string,
+	showCompletedRecurringInstances: boolean,
+	showSkippedRecurringInstances: boolean
+): boolean {
+	if (!showCompletedRecurringInstances && task.complete_instances?.includes(instanceDate)) {
+		return false;
+	}
+
+	if (!showSkippedRecurringInstances && task.skipped_instances?.includes(instanceDate)) {
+		return false;
+	}
+
+	return true;
+}
+
 /**
  * Create timeblock calendar event
  */
-export function createTimeblockEvent(timeblock: TimeBlock, date: string, defaultColor = "#6366f1"): CalendarEvent {
+export function createTimeblockEvent(
+	timeblock: TimeBlock,
+	date: string,
+	defaultColor = "#6366f1"
+): CalendarEvent {
 	const startDateTime = `${date}T${timeblock.startTime}:00`;
 	const endDateTime = `${date}T${timeblock.endTime}:00`;
 
@@ -846,16 +1167,23 @@ export function createTimeblockEvent(timeblock: TimeBlock, date: string, default
 /**
  * Validate and extract timeblocks from cached frontmatter
  */
-function extractTimeblocksFromCache(frontmatter: any, path: string): TimeBlock[] {
-	if (!frontmatter?.timeblocks || !Array.isArray(frontmatter.timeblocks)) {
+function extractTimeblocksFromCache(frontmatter: unknown, path: string): TimeBlock[] {
+	const frontmatterData = frontmatter as FrontmatterWithTimeblocks | null | undefined;
+	if (!frontmatterData?.timeblocks || !Array.isArray(frontmatterData.timeblocks)) {
 		return [];
 	}
 
 	const validTimeblocks: TimeBlock[] = [];
-	for (const tb of frontmatter.timeblocks) {
+	for (const tb of frontmatterData.timeblocks) {
+		const timeblock = tb as Partial<TimeBlock> | null;
 		// Basic validation - must have id, startTime, endTime
-		if (tb && typeof tb.id === "string" && typeof tb.startTime === "string" && typeof tb.endTime === "string") {
-			validTimeblocks.push(tb as TimeBlock);
+		if (
+			timeblock &&
+			typeof timeblock.id === "string" &&
+			typeof timeblock.startTime === "string" &&
+			typeof timeblock.endTime === "string"
+		) {
+			validTimeblocks.push(timeblock as TimeBlock);
 		}
 	}
 	return validTimeblocks;
@@ -866,7 +1194,7 @@ function extractTimeblocksFromCache(frontmatter: any, path: string): TimeBlock[]
  * Uses metadataCache for performance - no file reads required
  */
 // Cache for daily notes to avoid repeated getAllDailyNotes() calls
-let _dailyNotesCache: Record<string, any> | null = null;
+let _dailyNotesCache: Record<string, TFile> | null = null;
 let _dailyNotesCacheTime = 0;
 const DAILY_NOTES_CACHE_TTL = 5000; // 5 seconds
 
@@ -878,7 +1206,7 @@ export async function generateTimeblockEvents(
 	try {
 		// Use cached daily notes if available and fresh
 		const now = Date.now();
-		if (!_dailyNotesCache || (now - _dailyNotesCacheTime) > DAILY_NOTES_CACHE_TTL) {
+		if (!_dailyNotesCache || now - _dailyNotesCacheTime > DAILY_NOTES_CACHE_TTL) {
 			_dailyNotesCache = getAllDailyNotes();
 			_dailyNotesCacheTime = now;
 		}
@@ -894,16 +1222,24 @@ export async function generateTimeblockEvents(
 		) {
 			const dateString = formatDateForStorage(currentUTC);
 			const currentDate = new Date(`${dateString}T12:00:00`);
-			const moment = (window as any).moment(currentDate);
-			const dailyNote = getDailyNote(moment, allDailyNotes);
+			const dailyNote = getDailyNote(getWindowMoment(currentDate), allDailyNotes);
 
 			if (dailyNote) {
 				// Use metadataCache instead of reading file
 				const cache = plugin.app.metadataCache.getFileCache(dailyNote);
 				if (cache?.frontmatter) {
-					const timeblocks = extractTimeblocksFromCache(cache.frontmatter, dailyNote.path);
+					const timeblocks = extractTimeblocksFromCache(
+						cache.frontmatter,
+						dailyNote.path
+					);
 					for (const timeblock of timeblocks) {
-						events.push(createTimeblockEvent(timeblock, dateString, plugin.settings.calendarViewSettings.defaultTimeblockColor));
+						events.push(
+							createTimeblockEvent(
+								timeblock,
+								dateString,
+								plugin.settings.calendarViewSettings.defaultTimeblockColor
+							)
+						);
 					}
 				}
 			}
@@ -965,6 +1301,8 @@ export async function generateCalendarEvents(
 		showScheduledToDueSpan = false,
 		showTimeEntries = true,
 		showRecurring = true,
+		showCompletedRecurringInstances = true,
+		showSkippedRecurringInstances = true,
 		showICSEvents = true,
 		showTimeblocks = false,
 		visibleStart,
@@ -984,7 +1322,11 @@ export async function generateCalendarEvents(
 						task,
 						visibleStart,
 						visibleEnd,
-						plugin
+						plugin,
+						{
+							showCompletedRecurringInstances,
+							showSkippedRecurringInstances,
+						}
 					);
 					events.push(...recurringEvents);
 				}
@@ -993,21 +1335,29 @@ export async function generateCalendarEvents(
 				// Check if we should show a span event (replaces individual scheduled/due for this task)
 				let showedSpan = false;
 				if (showScheduledToDueSpan && task.scheduled && task.due) {
-					const spanEvent = createScheduledToDueSpanEvent(task, plugin);
-					if (spanEvent) {
-						// Check if span is in visible range (use scheduled date for range check)
-						if (isDateInVisibleRange(task.scheduled, visibleStart, visibleEnd) ||
-							isDateInVisibleRange(task.due, visibleStart, visibleEnd)) {
-							events.push(spanEvent);
-							showedSpan = true;
-						}
+					const spanEvents = createScheduledToDueSpanEvents(
+						task,
+						plugin,
+						visibleStart,
+						visibleEnd
+					);
+					if (spanEvents.length > 0) {
+						events.push(...spanEvents);
+						showedSpan = true;
 					}
 				}
 
 				// Only show individual scheduled/due events if we didn't show a span
 				if (!showedSpan) {
 					if (showScheduled && task.scheduled) {
-						if (isDateInVisibleRange(task.scheduled, visibleStart, visibleEnd, task.timeEstimate)) {
+						if (
+							isDateInVisibleRange(
+								task.scheduled,
+								visibleStart,
+								visibleEnd,
+								task.timeEstimate
+							)
+						) {
 							const scheduledEvent = createScheduledEvent(task, plugin);
 							if (scheduledEvent) events.push(scheduledEvent);
 						}
@@ -1035,7 +1385,10 @@ export async function generateCalendarEvents(
 		} catch (error) {
 			// Log error but continue processing other tasks
 			// This prevents a single task with invalid dates from breaking the entire calendar
-			console.warn(`[TaskNotes][Calendar] Error processing task "${task.title}" (${task.path}):`, error);
+			console.warn(
+				`[TaskNotes][Calendar] Error processing task "${task.title}" (${task.path}):`,
+				error
+			);
 		}
 	}
 
@@ -1070,7 +1423,6 @@ export async function handleTimeblockCreation(
 	allDay: boolean,
 	plugin: TaskNotesPlugin
 ): Promise<void> {
-
 	// Don't create timeblocks for all-day selections
 	if (allDay) {
 		new Notice(
@@ -1101,19 +1453,16 @@ export async function handleTimeEntryCreation(
 	allDay: boolean,
 	plugin: TaskNotesPlugin
 ): Promise<void> {
-
 	// Don't create time entries for all-day selections
 	if (allDay) {
-		new Notice(
-			plugin.i18n.translate("modals.timeEntry.mustHaveSpecificTime")
-		);
+		new Notice(plugin.i18n.translate("modals.timeEntry.mustHaveSpecificTime"));
 		return;
 	}
 
 	try {
 		// Get all tasks
 		const allTasks = await plugin.cacheManager.getAllTasks();
-		const unarchivedTasks = allTasks.filter((task: any) => !task.archived);
+		const unarchivedTasks = allTasks.filter((task) => !task.archived);
 
 		if (unarchivedTasks.length === 0) {
 			new Notice(plugin.i18n.translate("modals.timeEntry.noTasksAvailable"));
@@ -1121,50 +1470,53 @@ export async function handleTimeEntryCreation(
 		}
 
 		// Open task selector modal
-		openTaskSelector(plugin, unarchivedTasks, async (selectedTask: any) => {
-			if (selectedTask) {
-				try {
-					// Calculate duration
-					const durationMinutes = Math.round(
-						(end.getTime() - start.getTime()) / 60000
-					);
+		openTaskSelector(plugin, unarchivedTasks, (selectedTask: TaskInfo) => {
+			void (async () => {
+				if (selectedTask) {
+					try {
+						// Calculate duration
+						const durationMinutes = Math.round(
+							(end.getTime() - start.getTime()) / 60000
+						);
 
-					// Create new time entry
-					const newEntry = {
-						startTime: start.toISOString(),
-						endTime: end.toISOString(),
-						description: "",
-					};
+						// Create new time entry
+						const newEntry = {
+							startTime: start.toISOString(),
+							endTime: end.toISOString(),
+							description: "",
+						};
 
-					// Add to task's time entries
-					const updatedTimeEntries = [...(selectedTask.timeEntries || []), newEntry].map(
-						(entry) => {
-							const sanitizedEntry = { ...entry };
+						// Add to task's time entries
+						const updatedTimeEntries = [
+							...(selectedTask.timeEntries || []),
+							newEntry,
+						].map((entry) => {
+							const sanitizedEntry: Record<string, unknown> = { ...entry };
 							delete sanitizedEntry.duration;
-							return sanitizedEntry;
-						}
-					);
+							return sanitizedEntry as typeof entry;
+						});
 
-					// Save to file
-					await plugin.taskService.updateTask(selectedTask, {
-						timeEntries: updatedTimeEntries,
-					});
+						// Save to file
+						await plugin.taskService.updateTask(selectedTask, {
+							timeEntries: updatedTimeEntries,
+						});
 
-					// Note: updateTask in TaskService already triggers EVENT_TASK_UPDATED internally
-					// We just need to trigger EVENT_DATA_CHANGED
+						// Note: updateTask in TaskService already triggers EVENT_TASK_UPDATED internally
+						// We just need to trigger EVENT_DATA_CHANGED
 						plugin.emitter.trigger(EVENT_DATA_CHANGED);
 
-					new Notice(
-						plugin.i18n.translate("modals.timeEntry.created", {
-							taskTitle: selectedTask.title,
-							duration: durationMinutes.toString(),
-						})
-					);
-				} catch (error) {
-					console.error("Error creating time entry:", error);
-					new Notice(plugin.i18n.translate("modals.timeEntry.createFailed"));
+						new Notice(
+							plugin.i18n.translate("modals.timeEntry.created", {
+								taskTitle: selectedTask.title,
+								duration: durationMinutes.toString(),
+							})
+						);
+					} catch (error) {
+						console.error("Error creating time entry:", error);
+						new Notice(plugin.i18n.translate("modals.timeEntry.createFailed"));
+					}
 				}
-			}
+			})();
 		});
 	} catch (error) {
 		console.error("Error opening task selector for time entry:", error);
@@ -1176,15 +1528,18 @@ export async function handleTimeEntryCreation(
  * Handle timeblock drop (move to new date/time)
  */
 export async function handleTimeblockDrop(
-	dropInfo: any,
+	dropInfo: CalendarMutationInfo,
 	timeblock: TimeBlock,
 	originalDate: string,
 	plugin: TaskNotesPlugin
 ): Promise<void> {
-
 	try {
 		const newStart = dropInfo.event.start;
 		const newEnd = dropInfo.event.end;
+		if (!newStart || !newEnd) {
+			dropInfo.revert();
+			return;
+		}
 
 		// Calculate new date and times
 		const newDate = format(newStart, "yyyy-MM-dd");
@@ -1202,9 +1557,9 @@ export async function handleTimeblockDrop(
 		);
 
 		new Notice("Timeblock moved successfully");
-	} catch (error: any) {
+	} catch (error: unknown) {
 		console.error("Error moving timeblock:", error);
-		new Notice(`Failed to move timeblock: ${error.message}`);
+		new Notice(`Failed to move timeblock: ${getErrorMessage(error)}`);
 		dropInfo.revert();
 	}
 }
@@ -1213,12 +1568,11 @@ export async function handleTimeblockDrop(
  * Handle timeblock resize (change duration)
  */
 export async function handleTimeblockResize(
-	resizeInfo: any,
+	resizeInfo: CalendarMutationInfo,
 	timeblock: TimeBlock,
 	originalDate: string,
 	plugin: TaskNotesPlugin
 ): Promise<void> {
-
 	try {
 		const start = resizeInfo.event.start;
 		const end = resizeInfo.event.end;
@@ -1243,9 +1597,9 @@ export async function handleTimeblockResize(
 		);
 
 		new Notice("Timeblock duration updated");
-	} catch (error: any) {
+	} catch (error: unknown) {
 		console.error("Error resizing timeblock:", error);
-		new Notice(`Failed to resize timeblock: ${error.message}`);
+		new Notice(`Failed to resize timeblock: ${getErrorMessage(error)}`);
 		resizeInfo.revert();
 	}
 }
@@ -1260,7 +1614,6 @@ export async function showTimeblockInfoModal(
 	plugin: TaskNotesPlugin,
 	onChange?: () => void
 ): Promise<void> {
-
 	const modal = new TimeblockInfoModal(
 		plugin.app,
 		plugin,
@@ -1280,8 +1633,9 @@ export function applyTimeblockStyling(element: HTMLElement, timeblock: TimeBlock
 	element.setAttribute("data-timeblock-id", timeblock.id || "");
 
 	// Add visual styling for timeblocks
-	element.style.borderStyle = "solid";
-	element.style.borderWidth = "2px";
+	element.classList.remove("tn-static-border-style-dashed-12296c91");
+	element.classList.add("tn-static-border-style-solid-11080b69");
+	element.classList.add("tn-static-border-width-2px-a1222254");
 	element.classList.add("fc-timeblock-event");
 }
 
@@ -1325,13 +1679,13 @@ export async function handleDateTitleClick(date: Date, plugin: TaskNotesPlugin):
 		// Check if Daily Notes plugin is enabled
 		if (!appHasDailyNotesPluginLoaded()) {
 			new Notice(
-				"Daily Notes core plugin is not enabled. Please enable it in Settings > Core plugins."
+				"Daily notes core plugin is not enabled. Please enable it in settings > core plugins."
 			);
 			return;
 		}
 
 		// Convert date to moment for the API
-		const moment = (window as any).moment(date);
+		const moment = getWindowMoment(date);
 
 		// Get all daily notes to check if one exists for this date
 		const allDailyNotes = getAllDailyNotes();
@@ -1358,6 +1712,55 @@ export async function handleDateTitleClick(date: Date, plugin: TaskNotesPlugin):
 		console.error("Failed to navigate to daily note:", error);
 		new Notice(`Failed to navigate to daily note: ${errorMessage}`);
 	}
+}
+
+type DateTitleClickHandler = (date: Date, plugin: TaskNotesPlugin) => Promise<void> | void;
+
+/**
+ * FullCalendar does not always decorate the single-day time grid header as a
+ * nav link, because clicking it would normally navigate to the same view/date.
+ * TaskNotes uses date-header clicks for daily-note navigation, so wire that
+ * header explicitly while leaving the built-in navLink behavior alone elsewhere.
+ */
+export function attachDailyNoteHeaderLink(
+	headerCell: HTMLElement,
+	date: Date,
+	viewType: string,
+	plugin: TaskNotesPlugin,
+	handleClick: DateTitleClickHandler = handleDateTitleClick
+): void {
+	if (viewType !== "timeGridDay") {
+		return;
+	}
+
+	const linkEl =
+		headerCell.querySelector<HTMLElement>(".fc-col-header-cell-cushion") || headerCell;
+	const title = `Go to ${format(date, "d MMMM yyyy")}`;
+
+	linkEl.setAttribute("data-navlink", "");
+	linkEl.setAttribute("title", title);
+	linkEl.setAttribute("aria-label", title);
+	linkEl.classList.add("tasknotes-calendar-daily-note-link");
+	linkEl.dataset.tasknotesDailyNoteDate = date.toISOString();
+
+	if (linkEl.matches("a") && !linkEl.getAttribute("href")) {
+		linkEl.setAttribute("href", "#");
+	}
+
+	if (linkEl.dataset.tasknotesDailyNoteLinkAttached === "true") {
+		return;
+	}
+
+	linkEl.dataset.tasknotesDailyNoteLinkAttached = "true";
+	linkEl.addEventListener("click", (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const target = event.currentTarget as HTMLElement | null;
+		const targetDate = target?.dataset.tasknotesDailyNoteDate
+			? new Date(target.dataset.tasknotesDailyNoteDate)
+			: date;
+		void handleClick(targetDate, plugin);
+	});
 }
 
 /**

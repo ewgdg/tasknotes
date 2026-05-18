@@ -1,11 +1,4 @@
-import {
-	App,
-	SuggestModal,
-	TAbstractFile,
-	TFile,
-	parseFrontMatterAliases,
-	Notice,
-} from "obsidian";
+import { App, SuggestModal, TAbstractFile, TFile, parseFrontMatterAliases, Notice } from "obsidian";
 import type TaskNotesPlugin from "../main";
 
 export type FileSelectorResult =
@@ -44,23 +37,17 @@ export interface FileSelectorOptions {
 export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 	private plugin: TaskNotesPlugin;
 	private options: FileSelectorOptions;
-	private currentQuery: string = "";
-	private resultHandled: boolean = false;
+	private currentQuery = "";
+	private resultHandled = false;
 	private createFooterEl: HTMLElement | null = null;
 
-	constructor(
-		app: App,
-		plugin: TaskNotesPlugin,
-		options: FileSelectorOptions
-	) {
+	constructor(app: App, plugin: TaskNotesPlugin, options: FileSelectorOptions) {
 		super(app);
 		this.plugin = plugin;
 		this.options = options;
 
 		// Set placeholder
-		this.setPlaceholder(
-			options.placeholder || "Search files or type to create new..."
-		);
+		this.setPlaceholder(options.placeholder || "Search files or type to create new...");
 
 		// Set instructions
 		this.setInstructions([
@@ -87,7 +74,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 		this.scope.register(["Shift"], "Enter", (e: KeyboardEvent) => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.createNewFile();
+			void this.createNewFile();
 			return false;
 		});
 
@@ -96,7 +83,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 
 		// Create footer after DOM is ready.
 		// SuggestModal builds its DOM asynchronously, so we defer to the next tick.
-		setTimeout(() => this.createFooter(), 0);
+		window.setTimeout(() => this.createFooter(), 0);
 	}
 
 	private handleInputChange = (): void => {
@@ -108,12 +95,23 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 		const promptEl = this.modalEl.querySelector(".prompt");
 		if (!promptEl) return;
 
-		this.createFooterEl = promptEl.parentElement?.createDiv({
-			cls: "file-selector-create-footer",
-		}) || null;
+		this.createFooterEl =
+			promptEl.parentElement?.createDiv({
+				cls: "file-selector-create-footer",
+			}) || null;
 
 		if (this.createFooterEl) {
-			this.createFooterEl.style.display = "none";
+			this.createFooterEl.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.createFooterEl.classList.add("tn-static-display-none-6b99de8b");
 		}
 	}
 
@@ -121,12 +119,32 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 		if (!this.createFooterEl) return;
 
 		if (!this.currentQuery) {
-			this.createFooterEl.style.display = "none";
+			this.createFooterEl.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			this.createFooterEl.classList.add("tn-static-display-none-6b99de8b");
 			return;
 		}
 
 		this.createFooterEl.empty();
-		this.createFooterEl.style.display = "flex";
+		this.createFooterEl.classList.remove(
+			"tn-static-display-block-2a1b75c9",
+			"tn-static-display-flex-4d51fc62",
+			"tn-static-display-flex-8bb39979",
+			"tn-static-display-inline-block-60e32dcb",
+			"tn-static-display-inline-cccfa456",
+			"tn-static-display-inline-flex-f984c520",
+			"tn-static-display-none-6b99de8b",
+			"tn-static-min-height-800px-997b4c8c"
+		);
+		this.createFooterEl.classList.add("tn-static-display-flex-75816cae");
 
 		// Content
 		const contentDiv = this.createFooterEl.createDiv({
@@ -138,7 +156,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 			cls: "file-selector-create-footer__title-line",
 		});
 
-		const shortcut = titleLine.createSpan({
+		titleLine.createSpan({
 			cls: "file-selector-create-footer__shortcut",
 			text: "⇧↵",
 		});
@@ -178,9 +196,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 
 			// Determine the folder
 			const folderPath = this.options.newFileFolder || "";
-			const filePath = folderPath
-				? `${folderPath}/${fileName}.md`
-				: `${fileName}.md`;
+			const filePath = folderPath ? `${folderPath}/${fileName}.md` : `${fileName}.md`;
 
 			// Check if file already exists
 			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
@@ -228,8 +244,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 			);
 		} else {
 			filtered = allFiles.filter(
-				(file) =>
-					file instanceof TFile && !file.path.includes(".trash")
+				(file) => file instanceof TFile && !file.path.includes(".trash")
 			);
 		}
 
@@ -354,7 +369,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
 
 		// Obsidian's SuggestModal calls onClose() BEFORE onChooseSuggestion().
 		// Defer the cancelled check to the next tick so onChooseSuggestion() can set resultHandled first.
-		setTimeout(() => {
+		window.setTimeout(() => {
 			if (!this.resultHandled) {
 				this.options.onResult({ type: "cancelled" });
 			}
@@ -369,7 +384,7 @@ export class FileSelectorModal extends SuggestModal<TAbstractFile> {
  */
 export function openFileSelector(
 	plugin: TaskNotesPlugin,
-	onChoose: (file: TAbstractFile | null) => void,
+	onChoose: (file: unknown) => void,
 	options?: {
 		placeholder?: string;
 		title?: string;

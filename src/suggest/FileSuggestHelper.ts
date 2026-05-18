@@ -4,6 +4,8 @@ import { scoreMultiword } from "../utils/fuzzyMatch";
 import { parseDisplayFieldsRow } from "../utils/projectAutosuggestDisplayFieldsParser";
 import { getProjectPropertyFilter, matchesProjectProperty } from "../utils/projectFilterUtils";
 import { FilterUtils } from "../utils/FilterUtils";
+import { isPathInExcludedFolder, parseExcludedFolders } from "../utils/pathExclusions";
+import { collectCacheTags } from "../utils/tagExtraction";
 
 export interface FileSuggestionItem {
 	insertText: string; // usually basename
@@ -35,6 +37,7 @@ export const FileSuggestHelper = {
 				? plugin.app.vault.getMarkdownFiles()
 				: [];
 			const items: FileSuggestionItem[] = [];
+			const excludedFolders = parseExcludedFolders(plugin.settings?.excludedFolders);
 
 			// Collect additional searchable properties from settings rows (|s flag)
 			const rows: string[] = (plugin.settings?.projectAutosuggest?.rows ?? []).slice(0, 3);
@@ -43,7 +46,7 @@ export const FileSuggestHelper = {
 				try {
 					const tokens = parseDisplayFieldsRow(row);
 					for (const t of tokens) {
-						if ((t as any).searchable && !t.property.startsWith("literal:")) {
+						if (t.searchable && !t.property.startsWith("literal:")) {
 							extraProps.add(t.property);
 						}
 					}
@@ -59,22 +62,19 @@ export const FileSuggestHelper = {
 			const propertyFilter = getProjectPropertyFilter(filterConfig);
 
 			for (const file of files) {
+				if (isPathInExcludedFolder(file.path, excludedFolders)) {
+					continue;
+				}
+
 				const cache = plugin.app.metadataCache.getFileCache(file);
 
 				// Apply tag filtering if configured
 				if (requiredTags.length > 0) {
-					// Get tags from both native tag detection and frontmatter
-					const nativeTags = cache?.tags?.map((t) => t.tag.replace("#", "")) || [];
-					const frontmatterTags = cache?.frontmatter?.tags || [];
-					const allTags = [
-						...nativeTags,
-						...(Array.isArray(frontmatterTags)
-							? frontmatterTags
-							: [frontmatterTags].filter(Boolean)),
-					];
-
 					// Check if file has ANY of the required tags using hierarchical matching with proper exclusion handling
-					const hasRequiredTag = FilterUtils.matchesTagConditions(allTags, requiredTags);
+					const hasRequiredTag = FilterUtils.matchesTagConditions(
+						collectCacheTags(cache),
+						requiredTags
+					);
 					if (!hasRequiredTag) {
 						continue; // Skip this file
 					}
@@ -116,12 +116,24 @@ export const FileSuggestHelper = {
 
 				// Compute score: keep best among fields to rank the file
 				let bestScore = 0;
-				bestScore = Math.max(bestScore, scoreMultiword(query, basename) + 15); // basename weight
-				if (title) bestScore = Math.max(bestScore, scoreMultiword(query, title) + 5);
+				const hasQuery = qLower.length > 0;
+				const basenameScore = hasQuery ? scoreMultiword(query, basename) : 1;
+				if (basenameScore > 0) {
+					bestScore = Math.max(bestScore, basenameScore + 15); // basename weight
+				}
+				if (title) {
+					const titleScore = scoreMultiword(query, title);
+					if (titleScore > 0) {
+						bestScore = Math.max(bestScore, titleScore + 5);
+					}
+				}
 				if (Array.isArray(aliases)) {
 					for (const a of aliases) {
 						if (typeof a === "string") {
-							bestScore = Math.max(bestScore, scoreMultiword(query, a));
+							const aliasScore = scoreMultiword(query, a);
+							if (aliasScore > 0) {
+								bestScore = Math.max(bestScore, aliasScore);
+							}
 						}
 					}
 				}
@@ -134,7 +146,7 @@ export const FileSuggestHelper = {
 						if (prop === "file.path") {
 							val = file.path;
 						} else if (prop === "file.parent") {
-							val = (file.parent?.path || "") as string;
+							val = file.parent?.path || "";
 						} else if (prop === "file.basename") {
 							val = basename; // already default, but harmless
 						} else if (prop === "title") {
@@ -145,7 +157,7 @@ export const FileSuggestHelper = {
 								: [];
 							val = aList.join(" ");
 						} else {
-							const raw = (fm as any)[prop];
+							const raw = (fm as Record<string, unknown>)[prop];
 							if (raw != null) {
 								if (Array.isArray(raw))
 									val = raw.filter((x) => typeof x === "string").join(" ");
@@ -204,12 +216,14 @@ export const FileSuggestHelper = {
 		return new Promise<FileSuggestionItem[]>((resolve) => {
 			const anyPlugin = plugin as unknown as { __fileSuggestTimer?: number };
 			if (anyPlugin.__fileSuggestTimer) {
-				clearTimeout(anyPlugin.__fileSuggestTimer);
+				window.clearTimeout(anyPlugin.__fileSuggestTimer);
 			}
-			anyPlugin.__fileSuggestTimer = setTimeout(async () => {
-				const results = await run();
-				resolve(results);
-			}, debounceMs) as unknown as number;
+			anyPlugin.__fileSuggestTimer = window.setTimeout(() => {
+				void (async () => {
+					const results = await run();
+					resolve(results);
+				})();
+			}, debounceMs);
 		});
 	},
 };

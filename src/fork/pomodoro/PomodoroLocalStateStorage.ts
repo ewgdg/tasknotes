@@ -10,13 +10,25 @@ export type PomodoroLocalStateSnapshot = {
 export const POMODORO_LOCAL_STORAGE_KEY = "tasknotes-pomodoro-local-state";
 
 type LocalStorageApp = Pick<App, "loadLocalStorage" | "saveLocalStorage">;
+type UnknownPomodoroLocalStateSnapshot = Partial<
+	Record<keyof PomodoroLocalStateSnapshot, unknown>
+>;
+
+function isPomodoroState(value: unknown): value is PomodoroState {
+	return (
+		value !== null &&
+		typeof value === "object" &&
+		typeof (value as PomodoroState).isRunning === "boolean" &&
+		typeof (value as PomodoroState).timeRemaining === "number"
+	);
+}
 
 export function sanitizePomodoroLocalStateSnapshot(
-	snapshot: PomodoroLocalStateSnapshot
+	snapshot: UnknownPomodoroLocalStateSnapshot
 ): PomodoroLocalStateSnapshot {
 	const sanitized: PomodoroLocalStateSnapshot = {};
 
-	if (snapshot.pomodoroState) {
+	if (isPomodoroState(snapshot.pomodoroState)) {
 		sanitized.pomodoroState = snapshot.pomodoroState;
 	}
 
@@ -43,7 +55,7 @@ export function loadPomodoroLocalStateSnapshot(app: LocalStorageApp): PomodoroLo
 		if (stored && typeof stored === "string") {
 			const parsed = JSON.parse(stored);
 			if (parsed && typeof parsed === "object") {
-				return parsed as PomodoroLocalStateSnapshot;
+				return sanitizePomodoroLocalStateSnapshot(parsed as UnknownPomodoroLocalStateSnapshot);
 			}
 		}
 	} catch (error) {

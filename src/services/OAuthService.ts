@@ -1,27 +1,30 @@
-import type { Server, IncomingMessage, ServerResponse } from "http";
 import { Notice, requestUrl, Platform } from "obsidian";
-import { randomBytes, createHash } from "crypto";
 import TaskNotesPlugin from "../main";
 import { OAuthProvider, OAuthTokens, OAuthConnection, OAuthConfig } from "../types";
 import { OAUTH_CONSTANTS } from "./constants";
 import { OAuthNotConfiguredError, TokenExpiredError, TokenRefreshError } from "./errors";
+import type { HTTPRequestLike, HTTPResponseLike, HTTPServerLike } from "../api/httpTypes";
 
-let cachedHttpModule: typeof import("http") | null = null;
+type HttpModuleLike = {
+	createServer(
+		handler?: (req: HTTPRequestLike, res: HTTPResponseLike) => void
+	): HTTPServerLike;
+};
 
-function ensureHttpModule(): typeof import("http") {
+let cachedHttpModule: HttpModuleLike | null = null;
+
+function ensureHttpModule(): HttpModuleLike {
 	if (!Platform.isDesktopApp) {
 		throw new Error("OAuth redirect handling is only available on desktop.");
 	}
 
 	if (!cachedHttpModule) {
-		// Lazy-load the Node http module so mobile builds don't crash at load time
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
-		cachedHttpModule = require("http");
+		// Lazy-load the Node http module so mobile builds don't crash at load time.
+		// eslint-disable-next-line @typescript-eslint/no-require-imports, import/no-nodejs-modules -- OAuth redirect handling needs Node http only on desktop.
+		cachedHttpModule = require("http") as HttpModuleLike;
 	}
 
-	// TypeScript doesn't know we always set cachedHttpModule in the if block above
-	// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-	return cachedHttpModule!;
+	return cachedHttpModule;
 }
 
 /**
@@ -38,13 +41,16 @@ function ensureHttpModule(): typeof import("http") {
  */
 export class OAuthService {
 	private plugin: TaskNotesPlugin;
-	private callbackServer: Server | null = null;
-	private pendingOAuthState: Map<string, {
-		provider: OAuthProvider;
-		codeVerifier: string;
-		resolve: (code: string) => void;
-		reject: (error: Error) => void;
-	}> = new Map();
+	private callbackServer: HTTPServerLike | null = null;
+	private pendingOAuthState: Map<
+		string,
+		{
+			provider: OAuthProvider;
+			codeVerifier: string;
+			resolve: (code: string) => void;
+			reject: (error: Error) => void;
+		}
+	> = new Map();
 
 	// Token refresh mutex to prevent race conditions
 	// Maps provider to pending refresh promise
@@ -58,32 +64,28 @@ export class OAuthService {
 			redirectUri: "http://127.0.0.1:8080",
 			scope: [
 				"https://www.googleapis.com/auth/calendar.readonly",
-				"https://www.googleapis.com/auth/calendar.events"
+				"https://www.googleapis.com/auth/calendar.events",
 			],
 			authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
 			tokenEndpoint: "https://oauth2.googleapis.com/token",
 			deviceCodeEndpoint: "https://oauth2.googleapis.com/device/code",
-			revocationEndpoint: "https://oauth2.googleapis.com/revoke"
+			revocationEndpoint: "https://oauth2.googleapis.com/revoke",
 		},
 		microsoft: {
 			provider: "microsoft",
 			clientId: "", // Will be set from built-in or plugin settings
 			redirectUri: "http://localhost:8080",
-			scope: [
-				"Calendars.Read",
-				"Calendars.ReadWrite",
-				"offline_access"
-			],
+			scope: ["Calendars.Read", "Calendars.ReadWrite", "offline_access"],
 			authorizationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
 			tokenEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
 			deviceCodeEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",
-			revocationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/logout"
-		}
+			revocationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/logout",
+		},
 	};
 
 	constructor(plugin: TaskNotesPlugin) {
 		this.plugin = plugin;
-		this.loadClientIds();
+		void this.loadClientIds();
 	}
 
 	/**
@@ -131,7 +133,7 @@ export class OAuthService {
 			const config = this.configs[provider];
 
 			if (!Platform.isDesktopApp) {
-				new Notice("OAuth authentication requires the desktop app.");
+				new Notice("OAUTH authentication requires the desktop app.");
 				throw new Error("OAuth authentication requires the desktop app.");
 			}
 
@@ -163,7 +165,7 @@ export class OAuthService {
 					provider,
 					codeVerifier,
 					resolve: () => {}, // Will be set by promise
-					reject: () => {}
+					reject: () => {},
 				});
 
 				new Notice(`Opening browser for ${provider} authorization...`);
@@ -185,7 +187,6 @@ export class OAuthService {
 				// Restore original redirect URI
 				config.redirectUri = originalRedirectUri;
 			}
-
 		} catch (error) {
 			console.error(`OAuth authentication failed for ${provider}:`, error);
 			new Notice(`Failed to connect to ${provider}: ${error.message}`);
@@ -213,7 +214,7 @@ export class OAuthService {
 					server.listen(port, "127.0.0.1");
 				});
 				return port;
-			} catch (error) {
+			} catch {
 				// Port in use, try next one
 				continue;
 			}
@@ -226,36 +227,43 @@ export class OAuthService {
 	 * Generates a random code verifier for PKCE
 	 */
 	private generateCodeVerifier(): string {
-		return randomBytes(32)
-			.toString("base64url")
-			.replace(/=/g, "")
-			.replace(/\+/g, "-")
-			.replace(/\//g, "_");
+		return this.base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
 	}
 
 	/**
 	 * Generates code challenge from verifier (SHA256)
 	 */
 	private async generateCodeChallenge(verifier: string): Promise<string> {
-		const hash = createHash("sha256").update(verifier).digest();
-		return Buffer.from(hash)
-			.toString("base64url")
-			.replace(/=/g, "")
-			.replace(/\+/g, "-")
-			.replace(/\//g, "_");
+		const data = new TextEncoder().encode(verifier);
+		const hash = await crypto.subtle.digest("SHA-256", data);
+		return this.base64UrlEncode(new Uint8Array(hash));
 	}
 
 	/**
 	 * Generates a random state parameter for CSRF protection
 	 */
 	private generateState(): string {
-		return randomBytes(16).toString("hex");
+		return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+	}
+
+	private base64UrlEncode(bytes: Uint8Array): string {
+		let binary = "";
+		bytes.forEach((byte) => {
+			binary += String.fromCharCode(byte);
+		});
+		return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 	}
 
 	/**
 	 * Builds the authorization URL with all required parameters
 	 */
-	private buildAuthorizationUrl(config: OAuthConfig, codeChallenge: string, state: string): string {
+	private buildAuthorizationUrl(
+		config: OAuthConfig,
+		codeChallenge: string,
+		state: string
+	): string {
 		const params = new URLSearchParams({
 			client_id: config.clientId,
 			redirect_uri: config.redirectUri,
@@ -265,7 +273,7 @@ export class OAuthService {
 			code_challenge: codeChallenge,
 			code_challenge_method: "S256",
 			access_type: "offline", // Request refresh token
-			prompt: "consent" // Force consent screen to get refresh token
+			prompt: "consent", // Force consent screen to get refresh token
 		});
 
 		return `${config.authorizationEndpoint}?${params.toString()}`;
@@ -285,13 +293,15 @@ export class OAuthService {
 			try {
 				httpModule = ensureHttpModule();
 			} catch (error) {
-				reject(error);
+				reject(error instanceof Error ? error : new Error(String(error)));
 				return;
 			}
 
-			this.callbackServer = httpModule.createServer((req: IncomingMessage, res: ServerResponse) => {
-				this.handleCallback(req, res);
-			});
+			this.callbackServer = httpModule.createServer(
+				(req: HTTPRequestLike, res: HTTPResponseLike) => {
+					this.handleCallback(req, res);
+				}
+			);
 
 			// Use .once() instead of .on() since we only need to handle the first error
 			// This prevents memory leaks from accumulating error listeners
@@ -326,8 +336,10 @@ export class OAuthService {
 	/**
 	 * Handles incoming HTTP requests to the callback server
 	 */
-	private handleCallback(req: IncomingMessage, res: ServerResponse): void {
-		const url = new URL(req.url || "", `http://${req.headers.host}`);
+	private handleCallback(req: HTTPRequestLike, res: HTTPResponseLike): void {
+		const hostHeader = req.headers.host;
+		const host = Array.isArray(hostHeader) ? hostHeader[0] : (hostHeader ?? "localhost");
+		const url = new URL(req.url || "", `http://${host}`);
 		const code = url.searchParams.get("code");
 		const state = url.searchParams.get("state");
 		const error = url.searchParams.get("error");
@@ -407,7 +419,7 @@ export class OAuthService {
 			pending.reject = reject;
 
 			// Set timeout
-			setTimeout(() => {
+			window.setTimeout(() => {
 				if (this.pendingOAuthState.has(state)) {
 					this.pendingOAuthState.delete(state);
 					reject(new Error("OAuth timeout - authorization took too long"));
@@ -429,7 +441,7 @@ export class OAuthService {
 			code: code,
 			code_verifier: codeVerifier,
 			redirect_uri: config.redirectUri,
-			grant_type: "authorization_code"
+			grant_type: "authorization_code",
 		};
 
 		// Only include client_secret if it exists (optional for public clients)
@@ -445,10 +457,10 @@ export class OAuthService {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/x-www-form-urlencoded",
-					"Accept": "application/json"
+					Accept: "application/json",
 				},
 				body: urlParams.toString(),
-				throw: false  // Don't throw on error status, let us handle it
+				throw: false, // Don't throw on error status, let us handle it
 			});
 
 			// Check if request failed
@@ -457,7 +469,9 @@ export class OAuthService {
 				console.error("Response headers:", response.headers);
 				console.error("Response body:", response.text);
 				console.error("Response JSON:", response.json);
-				throw new Error(`Token exchange failed with status ${response.status}: ${response.text || JSON.stringify(response.json)}`);
+				throw new Error(
+					`Token exchange failed with status ${response.status}: ${response.text || JSON.stringify(response.json)}`
+				);
 			}
 
 			const data = response.json;
@@ -467,14 +481,14 @@ export class OAuthService {
 			}
 
 			const expiresIn = data.expires_in || 3600; // Default to 1 hour
-			const expiresAt = Date.now() + (expiresIn * 1000);
+			const expiresAt = Date.now() + expiresIn * 1000;
 
 			return {
 				accessToken: data.access_token,
 				refreshToken: data.refresh_token,
 				expiresAt: expiresAt,
 				scope: data.scope || config.scope.join(" "),
-				tokenType: data.token_type || "Bearer"
+				tokenType: data.token_type || "Bearer",
 			};
 		} catch (error) {
 			console.error("Token exchange error:", error);
@@ -503,7 +517,7 @@ export class OAuthService {
 		const params: Record<string, string> = {
 			client_id: config.clientId,
 			refresh_token: connection.tokens.refreshToken,
-			grant_type: "refresh_token"
+			grant_type: "refresh_token",
 		};
 
 		// Only include client_secret if it exists (optional for public clients)
@@ -519,10 +533,10 @@ export class OAuthService {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/x-www-form-urlencoded",
-					"Accept": "application/json"
+					Accept: "application/json",
 				},
 				body: urlParams.toString(),
-				throw: false // Don't throw on error status so we can inspect the response
+				throw: false, // Don't throw on error status so we can inspect the response
 			});
 
 			// Check for error responses (400, 401, etc.)
@@ -542,7 +556,7 @@ export class OAuthService {
 				console.error("[OAuth] Token refresh failed:", {
 					status: response.status,
 					error: oauthError,
-					description: oauthErrorDescription
+					description: oauthErrorDescription,
 				});
 
 				// Check if this is an irrecoverable token error
@@ -551,23 +565,25 @@ export class OAuthService {
 				// HTTP 401: unauthorized (token invalid)
 				const isIrrecoverableError =
 					response.status === 401 ||
-					(response.status === 400 && (
-						oauthError === "invalid_grant" ||
-						oauthError === "invalid_client"
-					));
+					(response.status === 400 &&
+						(oauthError === "invalid_grant" || oauthError === "invalid_client"));
 
 				if (isIrrecoverableError) {
 					// Auto-disconnect to prevent repeated failures
 					// This clears local tokens but doesn't revoke on provider (token is already invalid)
 					await this.clearConnection(provider);
 
-					new Notice(`${provider} connection expired. Please reconnect in Settings > Integrations.`);
+					new Notice(
+						`${provider} connection expired. Please reconnect in Settings > Integrations.`
+					);
 					throw new TokenRefreshError(provider, oauthError, oauthErrorDescription);
 				}
 
 				// For other errors (5xx server errors, network issues), throw generic error
 				// These may be transient and worth retrying
-				throw new Error(`Token refresh failed with status ${response.status}: ${oauthError || response.text || "Unknown error"}`);
+				throw new Error(
+					`Token refresh failed with status ${response.status}: ${oauthError || response.text || "Unknown error"}`
+				);
 			}
 
 			const data = response.json;
@@ -577,14 +593,14 @@ export class OAuthService {
 			}
 
 			const expiresIn = data.expires_in || 3600;
-			const expiresAt = Date.now() + (expiresIn * 1000);
+			const expiresAt = Date.now() + expiresIn * 1000;
 
 			const newTokens: OAuthTokens = {
 				accessToken: data.access_token,
 				refreshToken: data.refresh_token || connection.tokens.refreshToken, // Keep old refresh token if not provided
 				expiresAt: expiresAt,
 				scope: data.scope || connection.tokens.scope,
-				tokenType: data.token_type || "Bearer"
+				tokenType: data.token_type || "Bearer",
 			};
 
 			// Update stored connection
@@ -607,7 +623,7 @@ export class OAuthService {
 	 * Used when tokens are already invalid (e.g., after refresh failure with invalid_grant).
 	 */
 	private async clearConnection(provider: OAuthProvider): Promise<void> {
-		const data = await this.plugin.loadData() || {};
+		const data = (await this.plugin.loadData()) || {};
 		if (data.oauthConnections) {
 			delete data.oauthConnections[provider];
 			await this.plugin.saveData(data);
@@ -638,11 +654,10 @@ export class OAuthService {
 			}
 
 			// Start new refresh and store the promise
-			const refreshPromise = this.refreshToken(provider)
-				.finally(() => {
-					// Clean up the pending promise when done (success or failure)
-					this.tokenRefreshPromises.delete(provider);
-				});
+			const refreshPromise = this.refreshToken(provider).finally(() => {
+				// Clean up the pending promise when done (success or failure)
+				this.tokenRefreshPromises.delete(provider);
+			});
 
 			this.tokenRefreshPromises.set(provider, refreshPromise);
 
@@ -666,11 +681,11 @@ export class OAuthService {
 			tokens,
 			userEmail,
 			connectedAt: new Date().toISOString(),
-			lastRefreshed: new Date().toISOString()
+			lastRefreshed: new Date().toISOString(),
 		};
 
 		// Store in plugin data (Obsidian handles encryption)
-		const data = await this.plugin.loadData() || {};
+		const data = (await this.plugin.loadData()) || {};
 		if (!data.oauthConnections) {
 			data.oauthConnections = {};
 		}
@@ -712,7 +727,7 @@ export class OAuthService {
 		}
 
 		// Remove from local storage
-		const data = await this.plugin.loadData() || {};
+		const data = (await this.plugin.loadData()) || {};
 		if (data.oauthConnections) {
 			delete data.oauthConnections[provider];
 			await this.plugin.saveData(data);
@@ -734,17 +749,17 @@ export class OAuthService {
 		}
 
 		try {
-			const response = await requestUrl({
+			await requestUrl({
 				url: config.revocationEndpoint,
 				method: "POST",
 				headers: {
-					"Content-Type": "application/x-www-form-urlencoded"
+					"Content-Type": "application/x-www-form-urlencoded",
 				},
 				body: new URLSearchParams({
 					token: token,
-					...(config.clientId && { client_id: config.clientId })
+					...(config.clientId && { client_id: config.clientId }),
 				}).toString(),
-				throw: false
+				throw: false,
 			});
 
 			// Token revocation completed (status 200 or token already invalid)

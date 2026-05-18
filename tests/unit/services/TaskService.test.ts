@@ -104,6 +104,21 @@ describe('TaskService', () => {
       expect(taskInfo.dateModified).toBe('2025-01-01T12:00:00Z');
     });
 
+    it('should preserve wikilinks in the task title while keeping the filename safe (#1733)', async () => {
+      mockPlugin.settings.storeTitleInFilename = true;
+
+      const { file, taskInfo } = await taskService.createTask({
+        title: 'Buy milk from [[Lidl]]'
+      });
+
+      expect(file.path).toBe('Tasks/buy-milk-from-lidl.md');
+      expect(taskInfo.title).toBe('Buy milk from [[Lidl]]');
+      expect(mockPlugin.app.vault.create).toHaveBeenCalledWith(
+        'Tasks/buy-milk-from-lidl.md',
+        expect.not.stringContaining('title:')
+      );
+    });
+
     it('should create a task with all properties', async () => {
       const taskData: TaskCreationData = {
         title: 'Complex Task',
@@ -353,6 +368,26 @@ describe('TaskService', () => {
       expect(mockPlugin.app.vault.create).toHaveBeenCalledWith(
         'TaskNotes/Tasks/buy-groceries.md',
         expect.stringContaining('title: Buy groceries')
+      );
+    });
+
+    it('should resolve current note variables in the default task folder for manual creation (#1541)', async () => {
+      mockPlugin.settings.tasksFolder = '{{currentNotePath}}';
+
+      const mockCurrentFile = new TFile('Projects/MyProject/meeting-notes.md');
+      mockCurrentFile.parent = { path: 'Projects/MyProject' } as any;
+      mockPlugin.app.workspace.getActiveFile.mockReturnValue(mockCurrentFile);
+
+      const taskData: TaskCreationData = {
+        title: 'Current folder task',
+        creationContext: 'manual-creation'
+      };
+
+      await taskService.createTask(taskData);
+
+      expect(mockPlugin.app.vault.create).toHaveBeenCalledWith(
+        'Projects/MyProject/current-folder-task.md',
+        expect.stringContaining('title: Current folder task')
       );
     });
 
@@ -829,6 +864,48 @@ describe('TaskService', () => {
       expect(result.tags).not.toContain('archived');
     });
 
+    it('should process task folder template variables when unarchiving a moved task', async () => {
+      const archivedTask = TaskFactory.createTask({
+        title: 'Repro task',
+        path: '_PROJECTS/Demo/tasks/archive/repro.md',
+        archived: true,
+        tags: ['task', 'archived'],
+        projects: ['[[_PROJECTS/Demo/Demo]]']
+      });
+      const archivedFile = new TFile(archivedTask.path);
+      const restoredPath = '_PROJECTS/Demo/tasks/repro.md';
+      const restoredFile = new TFile(restoredPath);
+      let renamed = false;
+
+      mockPlugin.settings.moveArchivedTasks = true;
+      mockPlugin.settings.tasksFolder = '_PROJECTS/{{project}}/tasks';
+      mockPlugin.app.metadataCache.getFirstLinkpathDest = jest.fn().mockImplementation((path: string) => {
+        if (path === '_PROJECTS/Demo/Demo') {
+          return { basename: 'Demo' };
+        }
+        return null;
+      });
+      mockPlugin.app.vault.getAbstractFileByPath.mockImplementation((path: string) => {
+        if (path === archivedTask.path) {
+          return archivedFile;
+        }
+        if (path === restoredPath && renamed) {
+          return restoredFile;
+        }
+        return null;
+      });
+      mockPlugin.app.fileManager.renameFile.mockImplementation(async () => {
+        renamed = true;
+      });
+
+      const result = await taskService.toggleArchive(archivedTask);
+
+      expect(mockPlugin.app.fileManager.renameFile).toHaveBeenCalledWith(archivedFile, restoredPath);
+      expect(result.path).toBe(restoredPath);
+      expect(result.archived).toBe(false);
+      expect(result.tags).not.toContain('archived');
+    });
+
     it('should handle tasks without existing tags', async () => {
       const taskWithoutTags = TaskFactory.createTask({ tags: undefined });
 
@@ -1125,7 +1202,7 @@ describe('TaskService', () => {
     it('should delete a task successfully', async () => {
       await taskService.deleteTask(task);
 
-      expect(mockPlugin.app.vault.delete).toHaveBeenCalledWith(mockFile);
+      expect(mockPlugin.app.fileManager.trashFile).toHaveBeenCalledWith(mockFile);
       expect(mockPlugin.cacheManager.clearCacheEntry).toHaveBeenCalledWith(task.path);
       expect(mockPlugin.emitter.trigger).toHaveBeenCalledWith('task-deleted', {
         path: task.path,
@@ -1141,7 +1218,7 @@ describe('TaskService', () => {
     });
 
     it('should handle vault deletion errors', async () => {
-      mockPlugin.app.vault.delete.mockRejectedValue(new Error('Deletion failed'));
+      mockPlugin.app.fileManager.trashFile.mockRejectedValue(new Error('Deletion failed'));
 
       await expect(taskService.deleteTask(task))
         .rejects.toThrow('Failed to delete task');

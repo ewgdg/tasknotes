@@ -1,8 +1,9 @@
 import { Editor, TFile, Notice, EditorPosition } from "obsidian";
+import type { EditorView } from "@codemirror/view";
 import TaskNotesPlugin from "../main";
 import { TasksPluginParser, ParsedTaskData } from "../utils/TasksPluginParser";
 import { NaturalLanguageParser } from "./NaturalLanguageParser";
-import { TaskCreationData } from "../types";
+import { Reminder, TaskCreationData } from "../types";
 import {
 	getCurrentTimestamp,
 	combineDateAndTime,
@@ -14,7 +15,7 @@ import { StatusManager } from "./StatusManager";
 import { PriorityManager } from "./PriorityManager";
 import { dispatchTaskUpdate } from "../editor/TaskLinkOverlay";
 import { splitListPreservingLinksAndQuotes } from "../utils/stringSplit";
-import { TranslationKey } from "../i18n";
+import type { InterpolationValues, TranslationKey } from "../i18n";
 
 export class InstantTaskConvertService {
 	private plugin: TaskNotesPlugin;
@@ -22,7 +23,7 @@ export class InstantTaskConvertService {
 	private priorityManager: PriorityManager;
 	private nlParser: NaturalLanguageParser;
 
-	private translate(key: TranslationKey, variables?: Record<string, any>): string {
+	private translate(key: TranslationKey, variables?: InterpolationValues): string {
 		return this.plugin.i18n.translate(key, variables);
 	}
 
@@ -34,14 +35,7 @@ export class InstantTaskConvertService {
 		this.plugin = plugin;
 		this.statusManager = statusManager;
 		this.priorityManager = priorityManager;
-		this.nlParser = new NaturalLanguageParser(
-			plugin.settings.customStatuses,
-			plugin.settings.customPriorities,
-			plugin.settings.nlpDefaultToScheduled,
-			plugin.settings.nlpLanguage,
-			plugin.settings.nlpTriggers,
-			plugin.settings.userFields
-		);
+		this.nlParser = NaturalLanguageParser.fromPlugin(plugin);
 	}
 
 	/**
@@ -270,7 +264,7 @@ export class InstantTaskConvertService {
 				new Notice(this.translate("services.instantTaskConvert.notices.replaceLineFailed"));
 				// Clean up the created file since replacement failed
 				try {
-					await this.plugin.app.vault.delete(file);
+					await this.plugin.app.fileManager.trashFile(file);
 				} catch (cleanupError) {
 					console.warn(
 						"Failed to clean up created file after replacement failure:",
@@ -279,6 +273,8 @@ export class InstantTaskConvertService {
 				}
 				return;
 			}
+
+			await this.persistSourceNoteAfterReplacement(editor);
 
 			// Check if filename was changed due to length constraints
 			const expectedFilename = this.sanitizeTitle(parsedData.title);
@@ -441,15 +437,20 @@ export class InstantTaskConvertService {
 		// Sanitize and validate input data
 		// Check if title will be truncated and preserve overflow text (issue #1310)
 		const originalTitle = parsedData.title?.trim() || "";
-		const title = this.sanitizeTitle(originalTitle) || "Untitled Task";
+		const titleLinkPreservation = this.extractTitleLinks(originalTitle);
+		const titleSource = titleLinkPreservation.cleanTitle || originalTitle;
+		const title = this.sanitizeTitle(titleSource) || "Untitled Task";
 
 		// If title was truncated, preserve the overflow in details
-		let enhancedDetails = details;
-		if (originalTitle.length > 200) {
-			const overflowText = this.extractOverflowText(originalTitle, 200);
+		let enhancedDetails = this.appendPreservedTitleLinks(
+			details,
+			titleLinkPreservation.links
+		);
+		if (titleSource.length > 200) {
+			const overflowText = this.extractOverflowText(titleSource, 200);
 			if (overflowText) {
 				// Prepend overflow text to existing details
-				enhancedDetails = overflowText + (details ? "\n\n" + details : "");
+				enhancedDetails = overflowText + (enhancedDetails ? "\n\n" + enhancedDetails : "");
 			}
 		}
 
@@ -474,7 +475,10 @@ export class InstantTaskConvertService {
 		let scheduledDate: string | undefined;
 		let contextsArray: string[] = [];
 		// Only add task tag if using tag-based identification
-		let tagsArray = this.plugin.settings.taskIdentificationMethod === 'tag' ? [this.plugin.settings.taskTag] : [];
+		let tagsArray =
+			this.plugin.settings.taskIdentificationMethod === "tag"
+				? [this.plugin.settings.taskTag]
+				: [];
 		let timeEstimate: number | undefined;
 		let recurrence: string | undefined;
 
@@ -528,7 +532,10 @@ export class InstantTaskConvertService {
 			contextsArray = [...new Set(contextsArray)];
 
 			// Apply tags: start with task tag (if using tag mode), add parsed tags, then add default tags
-			tagsArray = this.plugin.settings.taskIdentificationMethod === 'tag' ? [this.plugin.settings.taskTag] : [];
+			tagsArray =
+				this.plugin.settings.taskIdentificationMethod === "tag"
+					? [this.plugin.settings.taskTag]
+					: [];
 			if (parsedTags.length > 0) {
 				tagsArray.push(...parsedTags);
 			}
@@ -584,7 +591,10 @@ export class InstantTaskConvertService {
 				contextsArray.push(...parsedContexts);
 			}
 			// Apply tags: start with task tag (if using tag mode), add parsed tags
-			tagsArray = this.plugin.settings.taskIdentificationMethod === 'tag' ? [this.plugin.settings.taskTag] : [];
+			tagsArray =
+				this.plugin.settings.taskIdentificationMethod === "tag"
+					? [this.plugin.settings.taskTag]
+					: [];
 			if (parsedTags.length > 0) {
 				tagsArray.push(...parsedTags);
 			}
@@ -629,7 +639,7 @@ export class InstantTaskConvertService {
 		const uniqueProjects = [...new Set(projectsArray)];
 
 		// Apply default reminders if enabled
-		let reminders: any[] | undefined = undefined;
+		let reminders: Reminder[] | undefined = undefined;
 		if (this.plugin.settings.useDefaultsOnInstantConvert) {
 			const defaults = this.plugin.settings.taskCreationDefaults;
 			if (defaults.defaultReminders && defaults.defaultReminders.length > 0) {
@@ -643,7 +653,7 @@ export class InstantTaskConvertService {
 
 		// Prepare custom frontmatter from NLP-parsed user fields
 		// Default values for user fields are applied by TaskService.createTask()
-		const customFrontmatter: Record<string, any> = {};
+		const customFrontmatter: Record<string, unknown> = {};
 		if (parsedData.userFields) {
 			for (const [fieldId, value] of Object.entries(parsedData.userFields)) {
 				// Find the user field definition to get the frontmatter key
@@ -656,7 +666,9 @@ export class InstantTaskConvertService {
 						customFrontmatter[userField.key] = value;
 					}
 				} else {
-					console.warn(`[InstantTaskConvert] No user field definition found for field ID: ${fieldId}`);
+					console.warn(
+						`[InstantTaskConvert] No user field definition found for field ID: ${fieldId}`
+					);
 				}
 			}
 		}
@@ -679,13 +691,51 @@ export class InstantTaskConvertService {
 			creationContext: "inline-conversion", // Mark as inline conversion for folder logic
 			dateCreated: getCurrentTimestamp(),
 			dateModified: getCurrentTimestamp(),
-			customFrontmatter: Object.keys(customFrontmatter).length > 0 ? customFrontmatter : undefined,
+			customFrontmatter:
+				Object.keys(customFrontmatter).length > 0 ? customFrontmatter : undefined,
 		};
 
 		// Use the centralized task creation service
 		const { file } = await this.plugin.taskService.createTask(taskData);
 
 		return file;
+	}
+
+	private extractTitleLinks(title: string): { cleanTitle: string; links: string[] } {
+		if (!title) {
+			return { cleanTitle: "", links: [] };
+		}
+
+		const links: string[] = [];
+		let cleanTitle = title.replace(/\[([^\]]+)\]\((<[^>]+>|[^)]+)\)/g, (match, label) => {
+			links.push(match);
+			return String(label).trim();
+		});
+
+		cleanTitle = cleanTitle.replace(/\[\[([^[\]]+)\]\]/g, (match, inner) => {
+			links.push(match);
+			const linkText = String(inner);
+			const display = linkText.includes("|") ? linkText.split("|").pop() || linkText : linkText;
+			return display.split("/").pop()?.replace(/\.md$/i, "") || display;
+		});
+
+		const uniqueLinks = [...new Set(links)];
+		return {
+			cleanTitle: cleanTitle.replace(/\s+/g, " ").trim(),
+			links: uniqueLinks,
+		};
+	}
+
+	private appendPreservedTitleLinks(details: string, links: string[]): string {
+		const linksToAppend = links.filter((link) => !details.includes(link));
+		if (linksToAppend.length === 0) {
+			return details;
+		}
+
+		const linkBlock = ["Source links:", ...linksToAppend.map((link) => `- ${link}`)].join(
+			"\n"
+		);
+		return details.trimEnd() ? `${details.trimEnd()}\n\n${linkBlock}` : linkBlock;
 	}
 
 	/**
@@ -724,7 +774,7 @@ export class InstantTaskConvertService {
 	private sanitizePriority(priority: string): string {
 		const validPriorities = this.priorityManager
 			.getAllPriorities()
-			.map((p: any) => (p && typeof p === "object" ? p.value : p))
+			.map((p) => p.value)
 			.filter((value) => value != null);
 		return validPriorities.includes(priority) ? priority : "";
 	}
@@ -735,7 +785,7 @@ export class InstantTaskConvertService {
 	private sanitizeStatus(status: string): string {
 		const validStatuses = this.statusManager
 			.getAllStatuses()
-			.map((s: any) => (s && typeof s === "object" ? s.value : s))
+			.map((s) => s.value)
 			.filter((value) => value != null);
 		return validStatuses.includes(status) ? status : "";
 	}
@@ -872,10 +922,10 @@ export class InstantTaskConvertService {
 			await this.forceMetadataCacheUpdate(taskFile);
 
 			// Small delay to allow the editor to process the line replacement and cache update
-			setTimeout(() => {
+			window.setTimeout(() => {
 				try {
 					// Access the CodeMirror instance from the editor
-					const cmEditor = (editor as any).cm;
+					const cmEditor = (editor as unknown as { cm?: EditorView }).cm;
 					if (cmEditor) {
 						// Preserve cursor position before dispatching update
 						const cursorPos = editor.getCursor();
@@ -884,7 +934,7 @@ export class InstantTaskConvertService {
 						dispatchTaskUpdate(cmEditor, taskFile.path);
 
 						// Restore cursor position after a brief delay
-						setTimeout(() => {
+						window.setTimeout(() => {
 							try {
 								editor.setCursor(cursorPos);
 							} catch (error) {
@@ -901,6 +951,33 @@ export class InstantTaskConvertService {
 		}
 	}
 
+	private async persistSourceNoteAfterReplacement(editor: Editor): Promise<TFile | null> {
+		type WorkspaceWithActiveEditor = {
+			activeEditor?: { editor?: Editor; file?: TFile | null } | null;
+			getActiveFile?: () => TFile | null;
+		};
+
+		const workspace = this.plugin.app.workspace as WorkspaceWithActiveEditor;
+		const activeEditor = workspace.activeEditor;
+		const sourceFile =
+			activeEditor?.editor === editor
+				? activeEditor.file
+				: workspace.getActiveFile?.() ?? null;
+
+		if (!sourceFile) {
+			return null;
+		}
+
+		try {
+			await this.plugin.app.vault.modify(sourceFile, editor.getValue());
+			this.plugin.notifyDataChanged(sourceFile.path, false, false);
+		} catch (error) {
+			console.debug("Error saving source note after instant task conversion:", error);
+		}
+
+		return sourceFile;
+	}
+
 	/**
 	 * Force Obsidian's metadata cache to update for a newly created file
 	 */
@@ -914,12 +991,14 @@ export class InstantTaskConvertService {
 			if (this.plugin.app.metadataCache.getFileCache(file) === null) {
 				// If cache is still null, trigger a manual update
 				// by reading the file again with a small delay
-				setTimeout(async () => {
-					try {
-						await this.plugin.app.vault.cachedRead(file);
-					} catch (error) {
-						console.debug("Error in delayed cache update:", error);
-					}
+				window.setTimeout(() => {
+					void (async () => {
+						try {
+							await this.plugin.app.vault.cachedRead(file);
+						} catch (error) {
+							console.debug("Error in delayed cache update:", error);
+						}
+					})();
 				}, 10);
 			}
 		} catch (error) {

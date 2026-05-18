@@ -1,15 +1,27 @@
-import { App } from "obsidian";
-import { EmbeddableMarkdownEditor } from "../editor/EmbeddableMarkdownEditor";
+import { App, TFile } from "obsidian";
+import type { Extension } from "@codemirror/state";
+import type { EmbeddableMarkdownEditor } from "../editor/EmbeddableMarkdownEditor";
+
+type EmbeddableMarkdownEditorConstructor =
+	typeof import("../editor/EmbeddableMarkdownEditor").EmbeddableMarkdownEditor;
+
+function loadEmbeddableMarkdownEditor(): EmbeddableMarkdownEditorConstructor {
+	// Lazy-load because the editor module resolves Obsidian internals during evaluation.
+	// eslint-disable-next-line @typescript-eslint/no-require-imports -- Modal editor is lazy-loaded to avoid evaluating Obsidian internals during import.
+	const editorModule = require("../editor/EmbeddableMarkdownEditor") as typeof import("../editor/EmbeddableMarkdownEditor");
+	return editorModule.EmbeddableMarkdownEditor;
+}
 
 export interface TaskModalEditorOptions {
 	value: string;
 	placeholder: string;
 	cls: string;
 	onChange: (value: string) => void;
-	onSubmit: () => void;
+	onSubmit: (shift: boolean) => void;
 	onEscape: () => void;
 	onTab: (shift: boolean) => boolean;
-	extensions?: any[];
+	extensions?: Extension[];
+	file?: TFile | null;
 }
 
 export function createTaskModalMarkdownEditor(
@@ -18,8 +30,10 @@ export function createTaskModalMarkdownEditor(
 	options: TaskModalEditorOptions
 ): EmbeddableMarkdownEditor | null {
 	try {
+		const EmbeddableMarkdownEditor = loadEmbeddableMarkdownEditor();
 		return new EmbeddableMarkdownEditor(app, container, {
 			...options,
+			onSubmit: (_editor, shift) => options.onSubmit(shift),
 			onTab: (_editor, shift) => options.onTab(shift),
 		});
 	} catch (error) {
@@ -36,7 +50,7 @@ export function createTaskModalMarkdownEditor(
 		fallbackTextarea.addEventListener("keydown", (e) => {
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
 				e.preventDefault();
-				options.onSubmit();
+				options.onSubmit(e.shiftKey);
 			} else if (e.key === "Escape") {
 				e.preventDefault();
 				options.onEscape();

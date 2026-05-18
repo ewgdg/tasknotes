@@ -37,12 +37,7 @@
  * 3. Using Obsidian's registerMarkdownPostProcessor for reading mode only
  */
 
-import {
-	EditorView,
-	PluginValue,
-	ViewPlugin,
-	ViewUpdate,
-} from "@codemirror/view";
+import { EditorView, PluginValue, ViewPlugin, ViewUpdate } from "@codemirror/view";
 import {
 	EVENT_DATA_CHANGED,
 	EVENT_TASK_DELETED,
@@ -50,15 +45,7 @@ import {
 	EVENT_DATE_CHANGED,
 	TaskInfo,
 } from "../types";
-import {
-	Component,
-	EventRef,
-	TFile,
-	editorInfoField,
-	editorLivePreviewField,
-	MarkdownView,
-	WorkspaceLeaf,
-} from "obsidian";
+import { Component, EventRef, TFile, editorInfoField, MarkdownView, WorkspaceLeaf } from "obsidian";
 import { Extension } from "@codemirror/state";
 
 import TaskNotesPlugin from "../main";
@@ -72,12 +59,13 @@ import {
 	shouldSkipMarkdownWidgetEditor,
 	shouldSkipMarkdownWidgetLeaf,
 } from "./MarkdownWidgetContext";
+import { insertAfterMetadataOrHeader } from "./MarkdownWidgetInsertion";
 
 // CSS class for identifying plugin-generated elements
-const CSS_TASK_CARD_WIDGET = 'tasknotes-task-card-note-widget';
+const CSS_TASK_CARD_WIDGET = "tasknotes-task-card-note-widget";
 
 // Event emitted when task card widget is injected
-const EVENT_TASK_CARD_INJECTED = 'task-card-injected';
+const EVENT_TASK_CARD_INJECTED = "task-card-injected";
 
 // Interface to track component lifecycle
 interface HTMLElementWithComponent extends HTMLElement {
@@ -88,11 +76,8 @@ interface HTMLElementWithComponent extends HTMLElement {
  * Helper function to create the task card widget
  * Now includes Component lifecycle management for proper cleanup
  */
-function createTaskCardWidget(
-	plugin: TaskNotesPlugin,
-	task: TaskInfo
-): HTMLElementWithComponent {
-	const container = document.createElement("div") as HTMLElementWithComponent;
+function createTaskCardWidget(plugin: TaskNotesPlugin, task: TaskInfo): HTMLElementWithComponent {
+	const container = activeDocument.createElement("div") as HTMLElementWithComponent;
 	container.className = `tasknotes-plugin task-card-note-widget ${CSS_TASK_CARD_WIDGET}`;
 
 	container.setAttribute("contenteditable", "false");
@@ -122,7 +107,7 @@ function createTaskCardWidget(
 
 export class TaskCardNoteDecorationsPlugin implements PluginValue {
 	private cachedTask: TaskInfo | null = null;
-	private currentFile: TFile | null = null;
+	private currentFile: unknown = null;
 	private eventListeners: EventRef[] = [];
 	private view: EditorView;
 	private currentWidget: HTMLElementWithComponent | null = null;
@@ -158,7 +143,7 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 	destroy() {
 		// Clean up debounce timer
 		if (this.debounceTimer) {
-			clearTimeout(this.debounceTimer);
+			window.clearTimeout(this.debounceTimer);
 			this.debounceTimer = null;
 		}
 
@@ -175,7 +160,7 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 	private setupEventListeners() {
 		// Debounced refresh to prevent excessive re-renders
 		const debouncedRefresh = () => {
-			if (this.debounceTimer) clearTimeout(this.debounceTimer);
+			if (this.debounceTimer) window.clearTimeout(this.debounceTimer);
 			this.debounceTimer = window.setTimeout(() => {
 				this.loadTaskForCurrentFile(this.view);
 			}, 100);
@@ -210,13 +195,15 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 	private cleanupOrphanedWidgets(view: EditorView): void {
 		try {
 			// Remove any orphaned widgets that might exist from previous instances
-			const container = view.dom.closest('.workspace-leaf-content');
+			const container = view.dom.closest(".workspace-leaf-content");
 			if (!container) {
-				console.debug('[TaskNotes] Could not find workspace-leaf-content for orphan cleanup');
+				console.debug(
+					"[TaskNotes] Could not find workspace-leaf-content for orphan cleanup"
+				);
 				return;
 			}
 
-			container.querySelectorAll(`.${CSS_TASK_CARD_WIDGET}`).forEach(el => {
+			container.querySelectorAll(`.${CSS_TASK_CARD_WIDGET}`).forEach((el) => {
 				if (el !== this.currentWidget) {
 					const holder = el as HTMLElementWithComponent;
 					holder.component?.unload();
@@ -224,7 +211,7 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 				}
 			});
 		} catch (error) {
-			console.error('[TaskNotes] Error cleaning up orphaned task card widgets:', error);
+			console.error("[TaskNotes] Error cleaning up orphaned task card widgets:", error);
 		}
 	}
 
@@ -280,13 +267,13 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 		}
 	}
 
-	private getFileFromView(view: EditorView): TFile | null {
+	private getFileFromView(view: EditorView): unknown {
 		try {
 			// Get the file associated with this specific editor view
 			const editorInfo = view.state.field(editorInfoField, false);
 			return editorInfo?.file || null;
 		} catch (error) {
-			console.debug('[TaskNotes] Error getting file from editor view:', error);
+			console.debug("[TaskNotes] Error getting file from editor view:", error);
 			return null;
 		}
 	}
@@ -317,7 +304,7 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 				let depth = 0;
 				const MAX_DEPTH = 20; // Prevent infinite loops
 
-				while (parent && parent !== document.body && depth < MAX_DEPTH) {
+				while (parent && parent !== activeDocument.body && depth < MAX_DEPTH) {
 					if (
 						parent.tagName === "TABLE" ||
 						parent.tagName === "TD" ||
@@ -326,11 +313,16 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 					) {
 						return true;
 					}
-					if (parent.classList.contains("popover") || parent.classList.contains("hover-popover")) {
+					if (
+						parent.classList.contains("popover") ||
+						parent.classList.contains("hover-popover")
+					) {
 						return true;
 					}
-					if (parent.classList.contains("markdown-embed") &&
-					    parent.getAttribute("data-type") === "footnote") {
+					if (
+						parent.classList.contains("markdown-embed") &&
+						parent.getAttribute("data-type") === "footnote"
+					) {
 						return true;
 					}
 					parent = parent.parentElement;
@@ -370,9 +362,11 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 
 			// Find .cm-sizer which contains the scrollable content area
 			// RISK: This relies on CodeMirror's internal DOM structure
-			const targetContainer = view.dom.closest('.markdown-source-view')?.querySelector<HTMLElement>('.cm-sizer');
+			const targetContainer = view.dom
+				.closest(".markdown-source-view")
+				?.querySelector<HTMLElement>(".cm-sizer");
 			if (!targetContainer) {
-				console.warn('[TaskNotes] Could not find .cm-sizer container for task card widget');
+				console.warn("[TaskNotes] Could not find .cm-sizer container for task card widget");
 				return;
 			}
 
@@ -383,18 +377,10 @@ export class TaskCardNoteDecorationsPlugin implements PluginValue {
 			this.currentWidget = widget;
 			this.widgetContainer = targetContainer;
 
-			// Insert after properties/frontmatter if present, otherwise at the beginning
-			// RISK: Relies on .metadata-container class from Obsidian
-			const metadataContainer = targetContainer.querySelector('.metadata-container');
-			if (metadataContainer?.nextSibling) {
-				metadataContainer.parentElement?.insertBefore(widget, metadataContainer.nextSibling);
-			} else {
-				targetContainer.insertBefore(widget, targetContainer.firstChild);
-			}
+			insertAfterMetadataOrHeader(targetContainer, widget);
 
 			// Emit event for coordination with other widgets (e.g., relationships)
 			this.plugin.emitter.trigger(EVENT_TASK_CARD_INJECTED, { container: targetContainer });
-
 		} catch (error) {
 			console.error("[TaskNotes] Error injecting task card widget:", error);
 			// Clean up on error
@@ -429,7 +415,7 @@ async function injectReadingModeWidget(
 	context?: ReadingModeInjectionContext
 ): Promise<void> {
 	const view = leaf.view;
-	if (!(view instanceof MarkdownView) || view.getMode() !== 'preview') {
+	if (!(view instanceof MarkdownView) || view.getMode() !== "preview") {
 		return;
 	}
 
@@ -454,13 +440,13 @@ async function injectReadingModeWidget(
 		try {
 			const previewView = view.previewMode;
 			const containerEl = previewView.containerEl;
-			containerEl.querySelectorAll(`.${CSS_TASK_CARD_WIDGET}`).forEach(el => {
+			containerEl.querySelectorAll(`.${CSS_TASK_CARD_WIDGET}`).forEach((el) => {
 				const holder = el as HTMLElementWithComponent;
 				holder.component?.unload();
 				el.remove();
 			});
 		} catch (error) {
-			console.debug('[TaskNotes] Error cleaning up task card in reading mode:', error);
+			console.debug("[TaskNotes] Error cleaning up task card in reading mode:", error);
 		}
 		return;
 	}
@@ -469,7 +455,7 @@ async function injectReadingModeWidget(
 		// Remove any existing widgets first
 		const previewView = view.previewMode;
 		const containerEl = previewView.containerEl;
-		containerEl.querySelectorAll(`.${CSS_TASK_CARD_WIDGET}`).forEach(el => {
+		containerEl.querySelectorAll(`.${CSS_TASK_CARD_WIDGET}`).forEach((el) => {
 			const holder = el as HTMLElementWithComponent;
 			holder.component?.unload();
 			el.remove();
@@ -485,21 +471,17 @@ async function injectReadingModeWidget(
 
 		// Find the markdown-preview-sizer
 		// RISK: Relies on Obsidian's internal DOM structure
-		const sizer = containerEl.querySelector<HTMLElement>('.markdown-preview-sizer');
+		const sizer = containerEl.querySelector<HTMLElement>(".markdown-preview-sizer");
 		if (!sizer) {
-			console.warn('[TaskNotes] Could not find .markdown-preview-sizer for task card in reading mode');
+			console.warn(
+				"[TaskNotes] Could not find .markdown-preview-sizer for task card in reading mode"
+			);
 			return;
 		}
 
-		// Insert after properties/frontmatter if present, otherwise at the beginning
-		const metadataContainer = sizer.querySelector('.metadata-container');
-		if (metadataContainer?.nextSibling) {
-			sizer.insertBefore(widget, metadataContainer.nextSibling);
-		} else {
-			sizer.insertBefore(widget, sizer.firstChild);
-		}
+		insertAfterMetadataOrHeader(sizer, widget);
 	} catch (error) {
-		console.error('[TaskNotes] Error injecting task card widget in reading mode:', error);
+		console.error("[TaskNotes] Error injecting task card widget in reading mode:", error);
 	}
 }
 
@@ -520,21 +502,21 @@ export function setupReadingModeHandlers(plugin: TaskNotesPlugin): () => void {
 	// Debounce to prevent excessive re-renders
 	let debounceTimer: number | null = null;
 	const debouncedRefresh = () => {
-		if (debounceTimer) clearTimeout(debounceTimer);
+		if (debounceTimer) window.clearTimeout(debounceTimer);
 		debounceTimer = window.setTimeout(() => {
-			const leaves = plugin.app.workspace.getLeavesOfType('markdown');
-			leaves.forEach(leaf => {
+			const leaves = plugin.app.workspace.getLeavesOfType("markdown");
+			leaves.forEach((leaf) => {
 				scheduleInjection(leaf);
 			});
 		}, 100);
 	};
 
 	// Inject widget when layout changes (file opened, switched, etc.)
-	const layoutChangeRef = plugin.app.workspace.on('layout-change', debouncedRefresh);
+	const layoutChangeRef = plugin.app.workspace.on("layout-change", debouncedRefresh);
 	workspaceRefs.push(layoutChangeRef);
 
 	// Inject widget when active leaf changes
-	const activeLeafChangeRef = plugin.app.workspace.on('active-leaf-change', (leaf) => {
+	const activeLeafChangeRef = plugin.app.workspace.on("active-leaf-change", (leaf) => {
 		if (leaf) {
 			scheduleInjection(leaf);
 		}
@@ -543,16 +525,16 @@ export function setupReadingModeHandlers(plugin: TaskNotesPlugin): () => void {
 
 	// Inject widget when file is modified (metadata changes) - debounced per file
 	const metadataDebounceTimers = new Map<string, number>();
-	const metadataChangeRef = plugin.app.metadataCache.on('changed', (file) => {
+	const metadataChangeRef = plugin.app.metadataCache.on("changed", (file) => {
 		// Clear existing timer for this file
 		const existingTimer = metadataDebounceTimers.get(file.path);
-		if (existingTimer) clearTimeout(existingTimer);
+		if (existingTimer) window.clearTimeout(existingTimer);
 
 		// Debounce per file to avoid freezing during typing
 		const timer = window.setTimeout(() => {
 			metadataDebounceTimers.delete(file.path);
-			const leaves = plugin.app.workspace.getLeavesOfType('markdown');
-			leaves.forEach(leaf => {
+			const leaves = plugin.app.workspace.getLeavesOfType("markdown");
+			leaves.forEach((leaf) => {
 				const view = leaf.view;
 				if (view instanceof MarkdownView && view.file === file) {
 					scheduleInjection(leaf);
@@ -571,18 +553,18 @@ export function setupReadingModeHandlers(plugin: TaskNotesPlugin): () => void {
 	emitterRefs.push(dataChangeListener);
 
 	// Initial injection for any already-open reading views
-	const leaves = plugin.app.workspace.getLeavesOfType('markdown');
-	leaves.forEach(leaf => {
+	const leaves = plugin.app.workspace.getLeavesOfType("markdown");
+	leaves.forEach((leaf) => {
 		scheduleInjection(leaf);
 	});
 
 	// Return cleanup function
 	return () => {
-		if (debounceTimer) clearTimeout(debounceTimer);
+		if (debounceTimer) window.clearTimeout(debounceTimer);
 
 		// Clean up each type of event ref with the correct method
-		workspaceRefs.forEach(ref => plugin.app.workspace.offref(ref));
-		metadataCacheRefs.forEach(ref => plugin.app.metadataCache.offref(ref));
-		emitterRefs.forEach(ref => plugin.emitter.offref(ref));
+		workspaceRefs.forEach((ref) => plugin.app.workspace.offref(ref));
+		metadataCacheRefs.forEach((ref) => plugin.app.metadataCache.offref(ref));
+		emitterRefs.forEach((ref) => plugin.emitter.offref(ref));
 	};
 }

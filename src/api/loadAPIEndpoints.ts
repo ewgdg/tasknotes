@@ -1,4 +1,53 @@
-async function loadAPIEndpoints(container: HTMLElement, apiPort = 8080): Promise<void> {
+import { requestUrl, type RequestUrlParam } from "obsidian";
+
+type OpenAPIOperationSummary = {
+	tags?: string[];
+	summary?: string;
+	description?: string;
+};
+
+type OpenAPISpecSummary = {
+	paths?: Record<string, Record<string, OpenAPIOperationSummary>>;
+};
+
+type EndpointSummary = {
+	method: string;
+	path: string;
+	summary: string;
+};
+
+type LoadAPIEndpointsOptions = {
+	apiAuthToken?: string;
+};
+
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function buildAPIEndpointsDocsRequest(
+	apiPort = 8080,
+	options: LoadAPIEndpointsOptions = {}
+): RequestUrlParam {
+	const request: RequestUrlParam = {
+		url: `http://localhost:${apiPort}/api/docs`,
+		throw: false,
+	};
+	const token = options.apiAuthToken?.trim();
+
+	if (token) {
+		request.headers = {
+			Authorization: `Bearer ${token}`,
+		};
+	}
+
+	return request;
+}
+
+async function loadAPIEndpoints(
+	container: HTMLElement,
+	apiPort = 8080,
+	options: LoadAPIEndpointsOptions = {}
+): Promise<void> {
 	// Show loading message first
 	const loadingEl = container.createEl("p", {
 		text: "Loading API endpoints...",
@@ -6,30 +55,24 @@ async function loadAPIEndpoints(container: HTMLElement, apiPort = 8080): Promise
 	});
 
 	try {
-		// eslint-disable-next-line no-console
-		console.log(`Fetching API documentation from http://localhost:${apiPort}/api/docs`);
-		const response = await fetch(`http://localhost:${apiPort}/api/docs`);
-		// eslint-disable-next-line no-console
-		console.log("API docs response:", response.status, response.statusText);
+		const response = await requestUrl(buildAPIEndpointsDocsRequest(apiPort, options));
 
-		if (!response.ok) {
-			throw new Error(`API unavailable (${response.status}: ${response.statusText})`);
+		if (response.status < 200 || response.status >= 300) {
+			throw new Error(`API unavailable (${response.status})`);
 		}
 
-		const openApiSpec = await response.json();
-		// eslint-disable-next-line no-console
-		console.log("OpenAPI spec loaded:", openApiSpec);
+		const openApiSpec = response.json as OpenAPISpecSummary;
 
 		// Remove loading message
 		loadingEl.remove();
 
 		// Group endpoints by tags/categories
-		const endpointsByTag: { [tag: string]: any[] } = {};
+		const endpointsByTag: Record<string, EndpointSummary[]> = {};
 
 		if (openApiSpec.paths) {
 			for (const [path, methods] of Object.entries(openApiSpec.paths)) {
-				for (const [method, operation] of Object.entries(methods as any)) {
-					const tags = (operation as any).tags || ["General"];
+				for (const [method, operation] of Object.entries(methods)) {
+					const tags = operation.tags || ["General"];
 					const tag = tags[0];
 
 					if (!endpointsByTag[tag]) {
@@ -39,10 +82,7 @@ async function loadAPIEndpoints(container: HTMLElement, apiPort = 8080): Promise
 					endpointsByTag[tag].push({
 						method: method.toUpperCase(),
 						path,
-						summary:
-							(operation as any).summary ||
-							(operation as any).description ||
-							"No description",
+						summary: operation.summary || operation.description || "No description",
 					});
 				}
 			}
@@ -70,7 +110,7 @@ async function loadAPIEndpoints(container: HTMLElement, apiPort = 8080): Promise
 				attr: { style: "color: var(--text-muted); margin: 16px 0;" },
 			});
 		}
-	} catch (error: any) {
+	} catch (error: unknown) {
 		console.error("Error loading API endpoints:", error);
 
 		// Remove loading message
@@ -78,10 +118,10 @@ async function loadAPIEndpoints(container: HTMLElement, apiPort = 8080): Promise
 
 		// Show error message with more details
 		container.createEl("p", {
-			text: `API server not accessible (${error.message}). Ensure the TaskNotes API server is running on port ${apiPort}.`,
+			text: `API server not accessible (${getErrorMessage(error)}). Ensure the TaskNotes API server is running on port ${apiPort}.`,
 			attr: { style: "color: var(--text-muted); font-style: italic; margin: 16px 0;" },
 		});
 	}
 }
 
-export { loadAPIEndpoints };
+export { buildAPIEndpointsDocsRequest, loadAPIEndpoints };

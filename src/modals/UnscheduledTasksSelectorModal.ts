@@ -25,7 +25,7 @@ export class UnscheduledTasksSelectorModal extends FuzzySuggestModal<TaskInfo> {
 	private tasks: TaskInfo[];
 	private onScheduleTask: (task: TaskInfo | null, options?: ScheduleTaskOptions) => void;
 	private defaultScheduleOptions?: ScheduleTaskOptions;
-	private translate: (key: TranslationKey, variables?: Record<string, any>) => string;
+	private translate: (key: TranslationKey, variables?: Record<string, unknown>) => string;
 
 	constructor(
 		app: App,
@@ -68,7 +68,7 @@ export class UnscheduledTasksSelectorModal extends FuzzySuggestModal<TaskInfo> {
 		this.containerEl.addClass("unscheduled-tasks-selector-modal");
 
 		// Load tasks
-		this.loadUnscheduledTasks();
+		void this.loadUnscheduledTasks();
 	}
 
 	async loadUnscheduledTasks() {
@@ -274,11 +274,11 @@ function renderProjectLinksForSelector(
 
 	projects.forEach((project, index) => {
 		if (index > 0) {
-			const separator = document.createTextNode(", ");
+			const separator = activeDocument.createTextNode(", ");
 			container.appendChild(separator);
 		}
 
-		const plusText = document.createTextNode("+");
+		const plusText = activeDocument.createTextNode("+");
 		container.appendChild(plusText);
 
 		if (isWikilinkProject(project)) {
@@ -303,7 +303,7 @@ function renderProjectLinksForSelector(
 			}
 		} else {
 			// Plain text project
-			const textNode = document.createTextNode(project);
+			const textNode = activeDocument.createTextNode(project);
 			container.appendChild(textNode);
 		}
 	});

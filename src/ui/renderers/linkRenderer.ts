@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- Renderer utilities check created elements before attaching interactions. */
 // Link and tag rendering utilities for UI components
 
 import { App, TFile, Notice } from "obsidian";
@@ -30,9 +30,22 @@ interface HoverLinkEvent {
 	sourcePath: string;
 }
 
-// Enhanced regex to handle more link types including autolinks and reference-style links
+// Enhanced regex to handle more link types including autolinks, bare URLs, and reference-style links
 const LINK_REGEX =
-	/\[\[([^[\]]+)\]\]|\[([^\]]+)\]\(([^)]+)\)|<(https?:\/\/[^\s>]+)>|\[([^\]]+)\]\s*\[([^\]]*)\]/g;
+	/\[\[([^[\]]+)\]\]|\[([^\]]+)\]\(([^)]+)\)|<(https?:\/\/[^\s>]+)>|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?])|\[([^\]]+)\]\s*\[([^\]]*)\]/g;
+const EXTERNAL_URI_SCHEME_REGEX = /^[a-z][a-z0-9+.-]*:/i;
+
+function appendExternalLink(container: HTMLElement, href: string, displayText: string): void {
+	const a = container.createEl("a", {
+		text: displayText,
+		attr: { href, target: "_blank", rel: "noopener" },
+	});
+	a.classList.add("external-link");
+}
+
+function isExternalHref(href: string): boolean {
+	return EXTERNAL_URI_SCHEME_REGEX.test(href);
+}
 
 /** Enhanced internal link creation with better error handling and accessibility */
 export function appendInternalLink(
@@ -67,54 +80,58 @@ export function appendInternalLink(
 		},
 	});
 
-	linkEl.addEventListener("click", async (e) => {
+	linkEl.addEventListener("click", (e) => {
 		e.preventDefault();
 		e.stopPropagation();
-		try {
-			if (e.ctrlKey || e.metaKey) {
-				// Ctrl/Cmd+Click opens in new tab
-				deps.workspace.openLinkText(normalizedPath, sourcePath, true);
-				return;
-			}
-
-			if (onPrimaryNavigate) {
-				const handled = await onPrimaryNavigate(normalizedPath, e);
-				if (handled !== false) {
+		void (async () => {
+			try {
+				if (e.ctrlKey || e.metaKey) {
+					// Ctrl/Cmd+Click opens in new tab
+					void deps.workspace.openLinkText(normalizedPath, sourcePath, true);
 					return;
 				}
-			}
 
-			const file =
-				deps.metadataCache.getFirstLinkpathDest(normalizedPath, sourcePath) ||
-				deps.metadataCache.getFirstLinkpathDest(normalizedPath, "");
-			if (file instanceof TFile) {
-				await deps.workspace.getLeaf(false).openFile(file);
-			} else if (showErrorNotices) {
-				new Notice(`Note "${displayText}" not found`);
-			}
-		} catch (error) {
-			console.error("[TaskNotes] Error opening internal link:", { filePath, error });
-			if (showErrorNotices) {
-				new Notice(`Failed to open note "${displayText}"`);
-			}
-		}
-	});
+				if (onPrimaryNavigate) {
+					const handled = await onPrimaryNavigate(normalizedPath, e);
+					if (handled !== false) {
+						return;
+					}
+				}
 
-	// Middle-click opens in new tab
-	linkEl.addEventListener("auxclick", async (e) => {
-		if (e.button === 1) {
-			e.preventDefault();
-			e.stopPropagation();
-			try {
 				const file =
 					deps.metadataCache.getFirstLinkpathDest(normalizedPath, sourcePath) ||
 					deps.metadataCache.getFirstLinkpathDest(normalizedPath, "");
 				if (file instanceof TFile) {
-					deps.workspace.openLinkText(normalizedPath, sourcePath, true);
+					await deps.workspace.getLeaf(false).openFile(file);
+				} else if (showErrorNotices) {
+					new Notice(`Note "${displayText}" not found`);
 				}
 			} catch (error) {
 				console.error("[TaskNotes] Error opening internal link:", { filePath, error });
+				if (showErrorNotices) {
+					new Notice(`Failed to open note "${displayText}"`);
+				}
 			}
+		})();
+	});
+
+	// Middle-click opens in new tab
+	linkEl.addEventListener("auxclick", (e) => {
+		if (e.button === 1) {
+			e.preventDefault();
+			e.stopPropagation();
+			void (async () => {
+				try {
+					const file =
+						deps.metadataCache.getFirstLinkpathDest(normalizedPath, sourcePath) ||
+						deps.metadataCache.getFirstLinkpathDest(normalizedPath, "");
+					if (file instanceof TFile) {
+						void deps.workspace.openLinkText(normalizedPath, sourcePath, true);
+					}
+				} catch (error) {
+					console.error("[TaskNotes] Error opening internal link:", { filePath, error });
+				}
+			})();
 		}
 	});
 
@@ -131,7 +148,7 @@ export function appendInternalLink(
 			deps.metadataCache.getFirstLinkpathDest(normalizedPath, "");
 		if (file instanceof TFile) {
 			const hoverEvent: HoverLinkEvent = {
-				event: event as MouseEvent,
+				event: event,
 				source: hoverSource,
 				hoverParent: container,
 				targetEl: linkEl,
@@ -146,7 +163,7 @@ export function appendInternalLink(
 /** Render a text string, converting WikiLinks and Markdown links */
 export interface RenderLinksOptions {
 	renderPlain?: (container: HTMLElement, text: string, deps: LinkServices) => void;
-	onTagClick?: (tag: string, event: MouseEvent) => void | Promise<void>;
+	onTagClick?: (tag: string, event: MouseEvent | KeyboardEvent) => void | Promise<void>;
 }
 
 export function renderTextWithLinks(
@@ -160,11 +177,11 @@ export function renderTextWithLinks(
 
 	// First, handle wikilinks and markdown links
 	while ((match = LINK_REGEX.exec(text)) !== null) {
-		const [full, wikiInner, mdText, mdHref] = match as any;
+		const [full, wikiInner, mdText, mdHref, autolinkHref, bareHref] = match;
 		const start = match.index;
 
 		if (start > lastIndex) {
-			container.appendChild(document.createTextNode(text.slice(lastIndex, start)));
+			container.appendChild(activeDocument.createTextNode(text.slice(lastIndex, start)));
 		}
 
 		if (wikiInner) {
@@ -180,15 +197,16 @@ export function renderTextWithLinks(
 		} else if (mdText && mdHref) {
 			const href = String(mdHref).trim();
 			const disp = String(mdText).trim();
-			if (/^[a-z]+:\/\//i.test(href)) {
-				const a = container.createEl("a", {
-					text: disp,
-					attr: { href, target: "_blank", rel: "noopener" },
-				});
-				a.classList.add("external-link");
+			if (isExternalHref(href)) {
+				appendExternalLink(container, href, disp);
 			} else {
 				appendInternalLink(container, href, disp, deps);
 			}
+		} else if (autolinkHref || bareHref) {
+			const href = String(autolinkHref || bareHref);
+			appendExternalLink(container, href, href);
+		} else {
+			container.appendChild(activeDocument.createTextNode(full));
 		}
 
 		lastIndex = start + full.length;
@@ -209,13 +227,13 @@ export function renderTextWithLinks(
 			// Add text before the tag
 			if (tagStart > tagLastIndex) {
 				container.appendChild(
-					document.createTextNode(remainingText.slice(tagLastIndex, tagStart))
+					activeDocument.createTextNode(remainingText.slice(tagLastIndex, tagStart))
 				);
 			}
 
 			// Add the prefix (space or start of string)
 			if (prefix) {
-				container.appendChild(document.createTextNode(prefix));
+				container.appendChild(activeDocument.createTextNode(prefix));
 			}
 
 			// Create clickable tag
@@ -233,14 +251,14 @@ export function renderTextWithLinks(
 			tagEl.addEventListener("click", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				options.onTagClick!(tag, e as MouseEvent);
+				void options.onTagClick!(tag, e);
 			});
 
 			tagEl.addEventListener("keydown", (e) => {
 				if (e.key === "Enter" || e.key === " ") {
 					e.preventDefault();
 					e.stopPropagation();
-					options.onTagClick!(tag, e as any);
+					void options.onTagClick!(tag, e);
 				}
 			});
 
@@ -249,11 +267,11 @@ export function renderTextWithLinks(
 
 		// Add any remaining text after the last tag
 		if (tagLastIndex < remainingText.length) {
-			container.appendChild(document.createTextNode(remainingText.slice(tagLastIndex)));
+			container.appendChild(activeDocument.createTextNode(remainingText.slice(tagLastIndex)));
 		}
 	} else if (remainingText) {
 		// No tag handling, just add the remaining text
-		container.appendChild(document.createTextNode(remainingText));
+		container.appendChild(activeDocument.createTextNode(remainingText));
 	}
 }
 
@@ -269,13 +287,13 @@ export function renderValueWithLinks(
 	}
 	if (Array.isArray(value)) {
 		value.forEach((item, idx) => {
-			if (idx > 0) container.appendChild(document.createTextNode(", "));
+			if (idx > 0) container.appendChild(activeDocument.createTextNode(", "));
 			if (typeof item === "string") renderTextWithLinks(container, item, deps);
-			else container.appendChild(document.createTextNode(String(item)));
+			else container.appendChild(activeDocument.createTextNode(String(item)));
 		});
 		return;
 	}
-	container.appendChild(document.createTextNode(String(value)));
+	container.appendChild(activeDocument.createTextNode(String(value)));
 }
 
 /**
@@ -371,11 +389,11 @@ export function renderProjectLinks(
 
 	validProjects.forEach((project, index) => {
 		if (index > 0) {
-			container.appendChild(document.createTextNode(", "));
+			container.appendChild(activeDocument.createTextNode(", "));
 		}
 
 		// Add + prefix for projects
-		container.appendChild(document.createTextNode("+"));
+		container.appendChild(activeDocument.createTextNode("+"));
 
 		if (isWikilink(project)) {
 			// Parse the wikilink to separate path and display text
@@ -415,11 +433,11 @@ export function renderProjectLinks(
 				});
 			} else {
 				// Fallback to plain text if parsing fails
-				container.appendChild(document.createTextNode(project));
+				container.appendChild(activeDocument.createTextNode(project));
 			}
 		} else {
 			// Plain text project
-			container.appendChild(document.createTextNode(project));
+			container.appendChild(activeDocument.createTextNode(project));
 		}
 	});
 }
@@ -445,11 +463,11 @@ export function renderArrayWithLinks(
 
 	validItems.forEach((item, index) => {
 		if (index > 0) {
-			container.appendChild(document.createTextNode(separator));
+			container.appendChild(activeDocument.createTextNode(separator));
 		}
 
 		if (prefix) {
-			container.appendChild(document.createTextNode(prefix));
+			container.appendChild(activeDocument.createTextNode(prefix));
 		}
 
 		renderTextWithLinks(container, item, deps, {

@@ -7,8 +7,8 @@ import {
 
 export async function migrateLoadedPluginData(
 	plugin: TaskNotesPlugin,
-	loadedData: Record<string, any> | null
-): Promise<Record<string, any> | null> {
+	loadedData: Record<string, unknown> | null
+): Promise<Record<string, unknown> | null> {
 	if (!loadedData || typeof loadedData !== "object") {
 		return loadedData;
 	}

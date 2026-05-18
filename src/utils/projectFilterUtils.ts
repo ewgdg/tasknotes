@@ -1,3 +1,5 @@
+import { stringifyUnknown } from "./stringUtils";
+
 export interface ProjectPropertyFilter {
 	key: string;
 	value: string;
@@ -15,6 +17,16 @@ export interface PropertyFilterSettings {
 
 function normalizePropertyValue(value?: string): string {
 	return value != null ? value.trim() : "";
+}
+
+function normalizePropertyValues(value?: string): string[] {
+	const normalized = normalizePropertyValue(value);
+	return normalized.length > 0
+		? normalized
+				.split(",")
+				.map((item) => item.trim())
+				.filter(Boolean)
+		: [];
 }
 
 export function normalizeProjectPropertyKey(key?: string): string {
@@ -49,14 +61,16 @@ export function matchesProjectProperty(
 		return false;
 	}
 
-	const actualValue = (frontmatter as Record<string, unknown>)[filter.key];
+	const actualValue = (frontmatter)[filter.key];
 
-	const expected = normalizePropertyValue(filter.value);
-	if (expected.length === 0) {
+	const expectedValues = normalizePropertyValues(filter.value);
+	if (expectedValues.length === 0) {
 		return actualValue !== undefined && actualValue !== null;
 	}
 
-	const normalizedExpected = expected.toLowerCase();
+	const normalizedExpectedValues = new Set(
+		expectedValues.map((expectedValue) => expectedValue.toLowerCase())
+	);
 
 	const matchesValue = (value: unknown): boolean => {
 		if (value === null || value === undefined) {
@@ -66,19 +80,19 @@ export function matchesProjectProperty(
 			return value.some((item) => matchesValue(item));
 		}
 		if (typeof value === "string") {
-			return value.trim().toLowerCase() === normalizedExpected;
+			return normalizedExpectedValues.has(value.trim().toLowerCase());
 		}
 		if (typeof value === "number" || typeof value === "boolean") {
-			return String(value).toLowerCase() === normalizedExpected;
+			return normalizedExpectedValues.has(String(value).toLowerCase());
 		}
 		if (typeof value === "object") {
 			try {
-				return JSON.stringify(value).toLowerCase() === normalizedExpected;
+				return normalizedExpectedValues.has(JSON.stringify(value).toLowerCase());
 			} catch {
 				return false;
 			}
 		}
-		return String(value).toLowerCase() === normalizedExpected;
+		return normalizedExpectedValues.has(stringifyUnknown(value).toLowerCase());
 	};
 
 	return matchesValue(actualValue);

@@ -2,6 +2,7 @@ import { App, Modal, Setting, setIcon, Notice, setTooltip } from "obsidian";
 import TaskNotesPlugin from "../main";
 import { TaskInfo, Reminder } from "../types";
 import { formatDateForDisplay } from "../utils/dateUtils";
+import { attachDateInputBehavior } from "../ui/dateInputBehavior";
 
 export class ReminderModal extends Modal {
 	private plugin: TaskNotesPlugin;
@@ -88,7 +89,7 @@ export class ReminderModal extends Modal {
 
 		// Compact header
 		const headerContainer = contentEl.createDiv({ cls: "reminder-modal__header" });
-		headerContainer.createEl("h2", { text: "Task Reminders" });
+		headerContainer.createEl("h2", { text: "Task reminders" });
 
 		headerContainer.createDiv({
 			cls: "reminder-modal__task-title",
@@ -124,7 +125,7 @@ export class ReminderModal extends Modal {
 
 		// Save button (initially disabled)
 		this.saveBtn = buttonContainer.createEl("button", {
-			text: "Save Changes",
+			text: "Save changes",
 			cls: "mod-cta reminder-modal__save-btn",
 		});
 		this.saveBtn.disabled = true;
@@ -156,10 +157,10 @@ export class ReminderModal extends Modal {
 	}
 
 	private setupKeyboardHandlers(): void {
-		const handleKeydown = async (e: KeyboardEvent) => {
+		const handleKeydown = (e: KeyboardEvent) => {
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !this.saveBtn.disabled) {
 				e.preventDefault();
-				await this.save();
+				void this.save();
 			} else if (e.key === "Escape") {
 				e.preventDefault();
 				this.cancel();
@@ -186,7 +187,7 @@ export class ReminderModal extends Modal {
 		const section = container.createDiv({ cls: "reminder-modal__section" });
 
 		const sectionHeader = section.createDiv({ cls: "reminder-modal__section-header" });
-		sectionHeader.createEl("h3", { text: "Current Reminders" });
+		sectionHeader.createEl("h3", { text: "Current reminders" });
 
 		if (this.reminders.length > 0) {
 			sectionHeader.createSpan({
@@ -253,7 +254,7 @@ export class ReminderModal extends Modal {
 				try {
 					const date = new Date(reminder.absoluteTime);
 					return `${date.toLocaleDateString()} at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-				} catch (error) {
+				} catch {
 					return `At ${reminder.absoluteTime}`;
 				}
 			}
@@ -327,7 +328,7 @@ export class ReminderModal extends Modal {
 		const section = container.createDiv({ cls: "reminder-modal__section" });
 
 		const sectionHeader = section.createDiv({ cls: "reminder-modal__section-header" });
-		sectionHeader.createEl("h3", { text: "Add New Reminder" });
+		sectionHeader.createEl("h3", { text: "Add new reminder" });
 
 		// Add quick actions for common reminders
 		this.renderQuickActions(section);
@@ -388,9 +389,9 @@ export class ReminderModal extends Modal {
 			})
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("minutes", "minutes")
-					.addOption("hours", "hours")
-					.addOption("days", "days")
+					.addOption("minutes", "Minutes")
+					.addOption("hours", "Hours")
+					.addOption("days", "Days")
 					.setValue(this.relativeUnit)
 					.onChange((value) => {
 						this.relativeUnit = value as "minutes" | "hours" | "days";
@@ -408,7 +409,7 @@ export class ReminderModal extends Modal {
 		});
 
 		new Setting(relativeContainer).setName("Relative to").addDropdown((dropdown) => {
-			const options: any = {};
+			const options: Record<string, string> = {};
 			if (this.task.due) {
 				options.due = `Due date (${formatDateForDisplay(this.task.due)})`;
 			}
@@ -421,7 +422,7 @@ export class ReminderModal extends Modal {
 				dropdown.setDisabled(true);
 			} else {
 				Object.entries(options).forEach(([key, label]) => {
-					dropdown.addOption(key, label as string);
+					dropdown.addOption(key, label);
 				});
 				dropdown.setValue(this.relativeAnchor);
 			}
@@ -435,16 +436,21 @@ export class ReminderModal extends Modal {
 		const absoluteContainer = form.createDiv({ cls: "absolute-fields" });
 
 		new Setting(absoluteContainer).setName("Date").addText((text) => {
-			text.setPlaceholder("YYYY-MM-DD")
+			text.setPlaceholder("Yyyy-mm-dd")
 				.setValue(this.absoluteDate)
 				.onChange((value) => {
 					this.absoluteDate = value;
 				});
 			text.inputEl.type = "date";
+			attachDateInputBehavior(text.inputEl, {
+				onCommit: (value) => {
+					this.absoluteDate = value;
+				},
+			});
 		});
 
 		new Setting(absoluteContainer).setName("Time").addText((text) => {
-			text.setPlaceholder("HH:MM")
+			text.setPlaceholder("Hh:mm")
 				.setValue(this.absoluteTime)
 				.onChange((value) => {
 					this.absoluteTime = value;
@@ -525,11 +531,51 @@ export class ReminderModal extends Modal {
 		const absoluteFields = form.querySelector(".absolute-fields") as HTMLElement;
 
 		if (type === "relative") {
-			relativeFields.style.display = "block";
-			absoluteFields.style.display = "none";
+			relativeFields.classList.remove(
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-display-none-6b99de8b",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			relativeFields.classList.add("tn-static-display-block-2a1b75c9");
+			absoluteFields.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			absoluteFields.classList.add("tn-static-display-none-6b99de8b");
 		} else {
-			relativeFields.style.display = "none";
-			absoluteFields.style.display = "block";
+			relativeFields.classList.remove(
+				"tn-static-display-block-2a1b75c9",
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			relativeFields.classList.add("tn-static-display-none-6b99de8b");
+			absoluteFields.classList.remove(
+				"tn-static-display-flex-4d51fc62",
+				"tn-static-display-flex-75816cae",
+				"tn-static-display-flex-8bb39979",
+				"tn-static-display-inline-block-60e32dcb",
+				"tn-static-display-inline-cccfa456",
+				"tn-static-display-inline-flex-f984c520",
+				"tn-static-display-none-6b99de8b",
+				"tn-static-min-height-800px-997b4c8c"
+			);
+			absoluteFields.classList.add("tn-static-display-block-2a1b75c9");
 		}
 	}
 
@@ -699,7 +745,7 @@ export class ReminderModal extends Modal {
 			}
 
 			// Re-render only the existing reminders section at the top
-			const tempContainer = document.createElement("div");
+			const tempContainer = activeDocument.createElement("div");
 			this.renderExistingReminders(tempContainer);
 			const newRemindersSection = tempContainer.firstChild as HTMLElement;
 			if (newRemindersSection) {
@@ -773,7 +819,7 @@ export class ReminderModal extends Modal {
 			console.error("Failed to save reminders:", error);
 			new Notice("Failed to save reminders. Please try again.");
 			this.saveBtn.disabled = false;
-			this.saveBtn.textContent = "Save Changes";
+			this.saveBtn.textContent = "Save changes";
 		}
 	}
 

@@ -40,8 +40,8 @@
     border: none;
     background: var(--interactive-accent);
     color: var(--text-on-accent);
-    cursor: var(--cursor, pointer);
-    transition: all 0.2s ease;
+    cursor: var(--cursor-link, pointer);
+    transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .tasknotes-plugin .nl-quick-create-button:hover {
@@ -58,8 +58,8 @@
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
     color: var(--tn-text-muted);
-    cursor: var(--cursor, pointer);
-    transition: all 0.2s ease;
+    cursor: var(--cursor-link, pointer);
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .tasknotes-plugin .nl-parse-button:hover {
@@ -76,8 +76,8 @@
     border: 1px solid var(--background-modifier-border);
     background: var(--background-secondary);
     color: var(--tn-text-muted);
-    cursor: var(--cursor, pointer);
-    transition: all 0.2s ease;
+    cursor: var(--cursor-link, pointer);
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .tasknotes-plugin .nl-show-detail-button:hover {
@@ -275,7 +275,7 @@
 
 .tasknotes-plugin .modal-form__suggestion {
     padding: var(--tn-spacing-sm) var(--tn-spacing-lg);
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     font-size: var(--tn-font-size-md);
     color: var(--tn-text-normal);
     line-height: 1.5;
@@ -403,7 +403,7 @@
 }
 
 .tasknotes-plugin .modal-form__input--interval {
-    width: 80px !important;
+    width: 80px;
     min-width: 60px;
     flex-shrink: 0;
     text-align: center;
@@ -553,12 +553,12 @@
     flex-direction: column;
     align-items: center;
     gap: var(--tn-spacing-sm);
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
 }
 
 .tasknotes-plugin .modal-form__day-input {
     margin: 0;
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     width: auto;
     height: auto;
     flex: none;
@@ -570,7 +570,7 @@
     color: var(--tn-text-normal);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     user-select: none;
     line-height: 1;
 }
@@ -662,8 +662,8 @@
 .tasknotes-plugin .task-selector-modal__suggestion {
     padding: var(--tn-spacing-md);
     border-radius: var(--tn-radius-sm);
-    border-left: 3px solid transparent;
-    transition: all var(--tn-transition-fast);
+    border-inline-start: 1px solid transparent;
+    transition: background-color var(--tn-transition-fast), border-color var(--tn-transition-fast);
 }
 
 .tasknotes-plugin .task-selector-modal__suggestion:hover {
@@ -861,8 +861,8 @@
     border-radius: var(--radius-s);
     background: var(--background-primary);
     color: var(--tn-text-normal);
-    cursor: var(--cursor, pointer);
-    transition: all 0.2s ease;
+    cursor: var(--cursor-link, pointer);
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .tasknotes-plugin .content-type-buttons button:hover {
@@ -1133,4 +1133,3 @@
     color: var(--tn-text-muted);
     font-style: italic;
 }
-

@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+ 
 import { PendingAutoArchive, TaskInfo, StatusConfig } from "../types";
 import TaskNotesPlugin from "../main";
 
@@ -8,7 +8,8 @@ import TaskNotesPlugin from "../main";
  */
 export class AutoArchiveService {
 	private plugin: TaskNotesPlugin;
-	private processorInterval: ReturnType<typeof setInterval> | null = null;
+	private processorTimer: number | null = null;
+	private isRunning = false;
 	private readonly PROCESSOR_INTERVAL_MS = 60000; // Check every 60 seconds
 
 	constructor(plugin: TaskNotesPlugin) {
@@ -41,25 +42,43 @@ export class AutoArchiveService {
 	 * Start the auto-archive service and begin periodic processing
 	 */
 	async start(): Promise<void> {
+		this.stop();
+		this.isRunning = true;
+
 		// Process any missed archives from when plugin was offline
 		await this.processQueue();
 
-		// Start periodic processor
-		this.processorInterval = setInterval(() => {
-			this.processQueue().catch((error) => {
-				console.error("Error processing auto-archive queue:", error);
-			});
-		}, this.PROCESSOR_INTERVAL_MS);
+		this.scheduleNextProcess();
 	}
 
 	/**
 	 * Stop the auto-archive service
 	 */
 	stop(): void {
-		if (this.processorInterval) {
-			clearInterval(this.processorInterval);
-			this.processorInterval = null;
+		this.isRunning = false;
+		if (this.processorTimer !== null) {
+			window.clearTimeout(this.processorTimer);
+			this.processorTimer = null;
 		}
+	}
+
+	private scheduleNextProcess(): void {
+		if (!this.isRunning) {
+			return;
+		}
+
+		this.processorTimer = window.setTimeout(() => {
+			this.processorTimer = null;
+			this.processQueue()
+				.catch((error) => {
+					console.error("Error processing auto-archive queue:", error);
+				})
+				.finally(() => {
+					if (this.isRunning) {
+						this.scheduleNextProcess();
+					}
+				});
+		}, this.PROCESSOR_INTERVAL_MS);
 	}
 
 	/**
@@ -67,6 +86,11 @@ export class AutoArchiveService {
 	 */
 	async scheduleAutoArchive(task: TaskInfo, statusConfig: StatusConfig): Promise<void> {
 		if (!statusConfig.autoArchive) {
+			return;
+		}
+
+		if (task.recurrence) {
+			await this.cancelAutoArchive(task.path);
 			return;
 		}
 

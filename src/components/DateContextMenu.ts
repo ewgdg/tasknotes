@@ -1,7 +1,44 @@
-import { App, setIcon } from "obsidian";
+import { App, Menu, moment as obsidianMoment, type MenuItem } from "obsidian";
+import TaskNotesPlugin from "../main";
 import { ContextMenu } from "./ContextMenu";
 import { DateTimePickerModal } from "../modals/DateTimePickerModal";
 import { addDaysToDateTime } from "../utils/dateUtils";
+
+type SubmenuMenuItem = {
+	setSubmenu(): Menu;
+};
+
+function asElement(target: EventTarget | null): Element | null {
+	if (!target || typeof target !== "object") {
+		return null;
+	}
+
+	const element = target as Element;
+	if (element.nodeType !== 1 || typeof element.closest !== "function") {
+		return null;
+	}
+
+	return element;
+}
+
+type MomentLike = {
+	format(format: string): string;
+	clone(): MomentLike;
+	add(amount: number, unit: string): MomentLike;
+	day(day: number): MomentLike;
+	isSameOrBefore(other: MomentLike, unit: string): boolean;
+	isBefore(other: MomentLike): boolean;
+	isSame(other: MomentLike, unit: string): boolean;
+	startOf(unit: string): MomentLike;
+};
+
+function getMoment(): MomentLike {
+	return (obsidianMoment as unknown as () => MomentLike)();
+}
+
+function getSubmenu(item: MenuItem): Menu {
+	return (item as unknown as SubmenuMenuItem).setSubmenu();
+}
 
 export interface DateOption {
 	label: string;
@@ -21,11 +58,15 @@ export interface DateContextMenuOptions {
 	includeDue?: boolean;
 	showRelativeDates?: boolean;
 	title?: string;
-	plugin?: any;
+	dateRole?: "due" | "scheduled";
+	plugin?: TaskNotesPlugin;
 	app?: App;
 }
 
 export class DateContextMenu {
+	private static activeMenu: ContextMenu | null = null;
+	private static activeTrigger: Element | null = null;
+
 	private menu: ContextMenu;
 	private options: DateContextMenuOptions;
 
@@ -37,6 +78,16 @@ export class DateContextMenu {
 
 	private t(key: string, fallback?: string, params?: Record<string, string | number>): string {
 		return this.options.plugin?.i18n.translate(key, params) || fallback || key;
+	}
+
+	private getFirstDayOfWeek(): number {
+		const firstDay = this.options.plugin?.settings?.calendarViewSettings?.firstDay;
+		return typeof firstDay === "number" &&
+			Number.isInteger(firstDay) &&
+			firstDay >= 0 &&
+			firstDay <= 6
+			? firstDay
+			: 0;
 	}
 
 	private buildMenu(): void {
@@ -86,9 +137,9 @@ export class DateContextMenu {
 			this.menu.addItem((item) => {
 				item.setTitle(this.t("contextMenus.date.weekdaysLabel", "Weekdays"));
 				item.setIcon("calendar");
-				const submenu = (item as any).setSubmenu();
+				const submenu = getSubmenu(item);
 				weekdayOptions.forEach((option) => {
-					submenu.addItem((subItem: any) => {
+					submenu.addItem((subItem) => {
 						const isSelected =
 							option.value && option.value === this.options.currentValue;
 						const title = isSelected
@@ -127,9 +178,38 @@ export class DateContextMenu {
 		}
 	}
 
+	private static closeActiveMenu(): void {
+		const activeMenu = DateContextMenu.activeMenu;
+		DateContextMenu.activeMenu = null;
+		DateContextMenu.activeTrigger = null;
+		activeMenu?.hide();
+	}
+
+	private static getTriggerFromEvent(event: UIEvent): Element | null {
+		const target = asElement(event.target);
+		return target?.closest('[data-tn-action="edit-date"], .task-card__metadata-date') ?? null;
+	}
+
+	private showWithTrigger(trigger: Element | null, show: () => void): void {
+		if (trigger && DateContextMenu.activeMenu && DateContextMenu.activeTrigger === trigger) {
+			DateContextMenu.closeActiveMenu();
+			return;
+		}
+
+		DateContextMenu.closeActiveMenu();
+		DateContextMenu.activeMenu = this.menu;
+		DateContextMenu.activeTrigger = trigger;
+		this.menu.onHide(() => {
+			if (DateContextMenu.activeMenu === this.menu) {
+				DateContextMenu.activeMenu = null;
+				DateContextMenu.activeTrigger = null;
+			}
+		});
+		show();
+	}
+
 	public getDateOptions(): DateOption[] {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const today = (window as any).moment();
+		const today = getMoment();
 		const options: DateOption[] = [];
 
 		if (this.options.currentValue) {
@@ -183,8 +263,14 @@ export class DateContextMenu {
 			"Friday",
 			"Saturday",
 		];
-		weekdayCodes.forEach((dayName, index) => {
-			let targetDate = today.clone().day(index);
+		const firstDay = this.getFirstDayOfWeek();
+		const orderedWeekdayCodes = [
+			...weekdayCodes.slice(firstDay),
+			...weekdayCodes.slice(0, firstDay),
+		];
+		orderedWeekdayCodes.forEach((dayName) => {
+			const dayIndex = weekdayCodes.indexOf(dayName);
+			let targetDate = today.clone().day(dayIndex);
 			if (targetDate.isSameOrBefore(today, "day")) {
 				targetDate = targetDate.add(1, "week");
 			}
@@ -228,13 +314,17 @@ export class DateContextMenu {
 	}
 
 	public show(event: UIEvent): void {
-		this.menu.show(event);
+		this.showWithTrigger(DateContextMenu.getTriggerFromEvent(event), () => {
+			this.menu.show(event);
+		});
 	}
 
 	public showAtElement(element: HTMLElement): void {
-		this.menu.showAtPosition({
-			x: element.getBoundingClientRect().left,
-			y: element.getBoundingClientRect().bottom + 4,
+		this.showWithTrigger(element, () => {
+			this.menu.showAtPosition({
+				x: element.getBoundingClientRect().left,
+				y: element.getBoundingClientRect().bottom + 4,
+			});
 		});
 	}
 
@@ -250,6 +340,8 @@ export class DateContextMenu {
 			currentDate: this.options.currentValue || null,
 			currentTime: this.options.currentTime || null,
 			title: this.t("contextMenus.date.modal.title", "Set date & time"),
+			dateRole: this.options.dateRole,
+			plugin: this.options.plugin,
 			onSelect: (date, time) => {
 				this.options.onSelect(date, time);
 			},

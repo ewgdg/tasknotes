@@ -1,54 +1,26 @@
-/* eslint-disable no-console */
-import { TFile, setIcon, Notice, Modal, App, setTooltip, parseLinktext, Menu, type CachedMetadata } from "obsidian";
-import { TaskInfo } from "../types";
+import { TFile, setIcon, Notice, setTooltip, parseLinktext, Menu } from "obsidian";
+import { PriorityConfig, TaskInfo } from "../types";
 import TaskNotesPlugin from "../main";
 import { TaskContextMenu } from "../components/TaskContextMenu";
-import {
-	getEffectiveTaskStatus,
-	getRecurrenceDisplayText,
-	filterEmptyProjects,
-	calculateTotalTimeSpent,
-	sanitizeForCssClass,
-} from "../utils/helpers";
-import { FilterUtils } from "../utils/FilterUtils";
-import {
-	formatDateTimeForDisplay,
-	isTodayTimeAware,
-	isOverdueTimeAware,
-	getDatePart,
-	getTimePart,
-	formatDateForStorage,
-} from "../utils/dateUtils";
-import { DateContextMenu } from "../components/DateContextMenu";
+import { getEffectiveTaskStatus, filterEmptyProjects, sanitizeForCssClass } from "../utils/helpers";
+import { formatDateForStorage, getDatePart } from "../utils/dateUtils";
+import { stringifyUnknown } from "../utils/stringUtils";
 import { PriorityContextMenu } from "../components/PriorityContextMenu";
 import { RecurrenceContextMenu } from "../components/RecurrenceContextMenu";
 import { createTaskClickHandler, createTaskHoverHandler } from "../utils/clickHandlers";
 import { ReminderModal } from "../modals/ReminderModal";
+import { convertInternalToUserProperties, isPropertyForField } from "../utils/propertyMapping";
+import { type TaskCardPresentationOptions } from "./taskCardPresentation";
+import { getChevronTooltip, getRecurrenceTooltip, getReminderTooltip } from "./taskCardHelpers";
 import {
-	renderProjectLinks,
-	renderTextWithLinks,
-	type LinkServices,
-} from "./renderers/linkRenderer";
-import { renderTagsValue, renderContextsValue, type TagServices } from "./renderers/tagRenderer";
-import {
-	convertInternalToUserProperties,
-	isPropertyForField,
-} from "../utils/propertyMapping";
-import { DEFAULT_INTERNAL_VISIBLE_PROPERTIES } from "../settings/defaults";
-import {
-	extractBasesValue,
-	isEmptyCardDisplayValue,
-	renderBasesValue,
-	resolveTaskCardPropertyLabel,
-	type TaskCardPresentationOptions,
-} from "./taskCardPresentation";
-import {
-	getChevronTooltip,
-	getRecurrenceTooltip,
-	getReminderTooltip,
-	getTaskCardPropertyLabel,
-	getTaskCardPropertyValue,
-} from "./taskCardHelpers";
+	getDefaultVisibleProperties,
+	renderPropertyMetadata,
+	updateMetadataVisibility,
+} from "./taskCardProperties";
+import { renderTextWithLinks, type LinkServices } from "./renderers/linkRenderer";
+export { showDeleteConfirmationModal } from "./taskCardDeletion";
+
+// Property labels are resolved in taskCardProperties via getTaskCardPropertyLabel.
 
 export interface TaskCardOptions {
 	targetDate?: Date;
@@ -67,6 +39,8 @@ export interface TaskCardOptions {
 	resolveExpandedRelationshipFilterMode?: () => "inherit" | "show-all";
 	/** Paths visible in the current view after Bases/search filtering. */
 	expandedRelationshipTaskPaths?: ReadonlySet<string>;
+	/** Sort order of paths in the current view after Bases/search sorting. */
+	expandedRelationshipTaskOrder?: ReadonlyMap<string, number>;
 }
 
 export const DEFAULT_TASK_CARD_OPTIONS: TaskCardOptions = {
@@ -75,18 +49,60 @@ export const DEFAULT_TASK_CARD_OPTIONS: TaskCardOptions = {
 	enableHoverPreview: true,
 };
 
-function getStoredTaskCardOptions(card: HTMLElement): Partial<TaskCardOptions> {
-	return ((card as any)._taskCardOptions ?? {}) as Partial<TaskCardOptions>;
+type TaskCardElement = HTMLElement & {
+	_taskPath?: string;
+	_taskCardOptions?: Partial<TaskCardOptions>;
+	_clickHandler?: EventListener;
+};
+
+type MenuWithItems = {
+	items?: unknown[];
+};
+
+function bindNestedCardHoverState(container: HTMLElement, card: HTMLElement): void {
+	const addNestedHover = () => card.classList.add("task-card--nested-interactive-hover");
+	const removeNestedHover = () => card.classList.remove("task-card--nested-interactive-hover");
+
+	container.addEventListener("mouseenter", addNestedHover);
+	container.addEventListener("mouseleave", removeNestedHover);
 }
 
-function parseExpandedRelationshipFilterMode(
-	value: unknown
-): "inherit" | "show-all" {
+function getStoredTaskCardOptions(card: HTMLElement): Partial<TaskCardOptions> {
+	return (card as TaskCardElement)._taskCardOptions ?? {};
+}
+
+function createUTCDateFromStorageDate(datePart: string): Date | null {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+	if (!match) {
+		return null;
+	}
+
+	const [, year, month, day] = match;
+	return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+}
+
+function getTodayTaskCardTargetDate(): Date {
+	const todayLocal = new Date();
+	return new Date(Date.UTC(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate()));
+}
+
+function getDefaultTaskCardTargetDate(task: TaskInfo): Date {
+	if (task.recurrence && task.recurrence_anchor !== "completion" && task.scheduled) {
+		const scheduledDate = createUTCDateFromStorageDate(getDatePart(task.scheduled));
+		if (scheduledDate) {
+			return scheduledDate;
+		}
+	}
+
+	return getTodayTaskCardTargetDate();
+}
+
+function parseExpandedRelationshipFilterMode(value: unknown): "inherit" | "show-all" {
 	if (typeof value === "number") {
 		return value === 1 ? "show-all" : "inherit";
 	}
 
-	const normalized = String(value ?? "")
+	const normalized = stringifyUnknown(value)
 		.trim()
 		.toLowerCase()
 		.replace(/^['"]|['"]$/g, "")
@@ -103,14 +119,10 @@ function parseExpandedRelationshipFilterMode(
 	return "inherit";
 }
 
-function filterExpandedRelationshipTasks(
-	card: HTMLElement,
-	tasks: TaskInfo[]
-): TaskInfo[] {
+function filterExpandedRelationshipTasks(card: HTMLElement, tasks: TaskInfo[]): TaskInfo[] {
 	const options = getStoredTaskCardOptions(card);
 	const filterMode = parseExpandedRelationshipFilterMode(
-		options.resolveExpandedRelationshipFilterMode?.()
-			?? options.expandedRelationshipFilterMode
+		options.resolveExpandedRelationshipFilterMode?.() ?? options.expandedRelationshipFilterMode
 	);
 	if (filterMode !== "inherit") {
 		return tasks;
@@ -124,12 +136,59 @@ function filterExpandedRelationshipTasks(
 	return tasks.filter((relatedTask) => allowedTaskPaths.has(relatedTask.path));
 }
 
+function sortExpandedRelationshipTasks(
+	card: HTMLElement,
+	tasks: TaskInfo[],
+	plugin: TaskNotesPlugin
+): TaskInfo[] {
+	const taskOrder = getStoredTaskCardOptions(card).expandedRelationshipTaskOrder;
+	if (!taskOrder || taskOrder.size === 0) {
+		return plugin.projectSubtasksService.sortTasks([...tasks]);
+	}
+
+	const ranked: TaskInfo[] = [];
+	const unranked: TaskInfo[] = [];
+	for (const task of tasks) {
+		if (taskOrder.has(task.path)) {
+			ranked.push(task);
+		} else {
+			unranked.push(task);
+		}
+	}
+
+	ranked.sort((a, b) => {
+		const aOrder = taskOrder.get(a.path);
+		const bOrder = taskOrder.get(b.path);
+		if (aOrder === undefined || bOrder === undefined) {
+			return 0;
+		}
+		return aOrder - bOrder;
+	});
+	return [...ranked, ...plugin.projectSubtasksService.sortTasks([...unranked])];
+}
+
 function tTaskCard(
 	plugin: TaskNotesPlugin,
 	key: string,
 	vars?: Record<string, string | number>
 ): string {
 	return plugin.i18n.translate(`ui.taskCard.${key}`, vars);
+}
+
+function taskHasDetails(task: TaskInfo): boolean {
+	return typeof task.details === "string" && task.details.trim().length > 0;
+}
+
+function renderTaskTitle(container: HTMLElement, task: TaskInfo, plugin: TaskNotesPlugin): void {
+	container.empty();
+	const title = stringifyUnknown(task.title);
+	const linkServices: LinkServices = {
+		metadataCache: plugin.app.metadataCache,
+		workspace: plugin.app.workspace,
+		sourcePath: task.path,
+	};
+
+	renderTextWithLinks(container, title, linkServices);
 }
 
 /* =================================================================
@@ -183,7 +242,7 @@ function updateBadgeIndicator(
 	selector: string,
 	config: Omit<BadgeIndicatorConfig, "container"> & { shouldExist: boolean }
 ): HTMLElement | null {
-	const existing = container.querySelector(selector) as HTMLElement | null;
+	const existing = container.querySelector<HTMLElement>(selector);
 
 	if (!config.shouldExist) {
 		existing?.remove();
@@ -202,7 +261,8 @@ function updateBadgeIndicator(
 
 	// Create new indicator
 	const badgesContainer = container.querySelector(".task-card__badges") as HTMLElement;
-	const targetContainer = badgesContainer || container.querySelector(".task-card__main-row") as HTMLElement;
+	const targetContainer =
+		badgesContainer || (container.querySelector(".task-card__main-row") as HTMLElement);
 
 	if (!targetContainer) return null;
 
@@ -216,6 +276,9 @@ function updateBadgeIndicator(
  * Mark interactive task-card controls so draggable parent cards do not swallow clicks.
  */
 function prepareInteractiveControl(element: HTMLElement): void {
+	element.setAttribute("role", "button");
+	element.tabIndex = 0;
+
 	if (element.dataset.tnNoDrag === "true") {
 		element.setAttribute("draggable", "false");
 		return;
@@ -226,6 +289,12 @@ function prepareInteractiveControl(element: HTMLElement): void {
 	element.addEventListener("mousedown", (e) => {
 		e.preventDefault();
 		e.stopPropagation();
+	});
+	element.addEventListener("keydown", (e) => {
+		if (e.key !== "Enter" && e.key !== " ") return;
+		e.preventDefault();
+		e.stopPropagation();
+		element.click();
 	});
 }
 
@@ -242,79 +311,99 @@ function createStatusCycleHandler(
 	card: HTMLElement,
 	statusDot: HTMLElement,
 	targetDate: Date
-): (e: MouseEvent) => Promise<void> {
-	return async (e: MouseEvent) => {
+): (e: MouseEvent) => void {
+	return (e: MouseEvent) => {
 		e.stopPropagation();
-		try {
-			const updateStatusVisuals = (
-				updatedTask: TaskInfo,
-				effectiveStatus: string,
-				isCompleted: boolean
-			) => {
-				const statusConfig = plugin.statusManager.getStatusConfig(effectiveStatus);
-				if (statusConfig?.color) {
-					statusDot.style.borderColor = statusConfig.color;
+		void (async () => {
+			try {
+				const updateStatusVisuals = (
+					updatedTask: TaskInfo,
+					effectiveStatus: string,
+					isCompleted: boolean
+				) => {
+					const statusConfig = plugin.statusManager.getStatusConfig(effectiveStatus);
+					if (statusConfig?.color) {
+						statusDot.style.borderColor = statusConfig.color;
+					} else {
+						statusDot.style.removeProperty("border-color");
+					}
+
+					if (statusConfig?.icon) {
+						statusDot.addClass("task-card__status-dot--icon");
+						statusDot.empty();
+						setIcon(statusDot, statusConfig.icon);
+					} else {
+						statusDot.removeClass("task-card__status-dot--icon");
+						statusDot.empty();
+					}
+
+					if (statusConfig?.color) {
+						card.style.setProperty("--current-status-color", statusConfig.color);
+					} else {
+						card.style.removeProperty("--current-status-color");
+					}
+
+					const nextStatus = plugin.statusManager.getNextStatus(effectiveStatus);
+					const nextStatusConfig = plugin.statusManager.getStatusConfig(nextStatus);
+					if (nextStatusConfig?.color) {
+						card.style.setProperty("--next-status-color", nextStatusConfig.color);
+					} else {
+						card.style.removeProperty("--next-status-color");
+					}
+
+					const checkbox = card.querySelector<HTMLInputElement>(".task-card__checkbox");
+					if (checkbox) {
+						checkbox.checked = isCompleted;
+					}
+
+					updateCardCompletionState(
+						card,
+						updatedTask,
+						plugin,
+						isCompleted,
+						effectiveStatus
+					);
+				};
+
+				if (task.recurrence) {
+					// For recurring tasks, toggle completion for the target date
+					const updatedTask = await plugin.toggleRecurringTaskComplete(task, targetDate);
+					const newEffectiveStatus = getEffectiveTaskStatus(
+						updatedTask,
+						targetDate,
+						plugin.statusManager.getCompletedStatuses()[0]
+					);
+					const isNowCompleted =
+						plugin.statusManager.isCompletedStatus(newEffectiveStatus);
+					updateStatusVisuals(updatedTask, newEffectiveStatus, isNowCompleted);
 				} else {
-					statusDot.style.borderColor = "";
+					// For regular tasks, cycle to next/previous status based on shift key
+					const freshTask = await plugin.cacheManager.getTaskInfo(task.path);
+					if (!freshTask) {
+						new Notice("Task not found");
+						return;
+					}
+					const currentStatus = freshTask.status || plugin.settings.defaultTaskStatus;
+					const nextStatus = e.shiftKey
+						? plugin.statusManager.getPreviousStatus(currentStatus)
+						: plugin.statusManager.getNextStatus(currentStatus);
+					const updatedTask = await plugin.updateTaskProperty(
+						freshTask,
+						"status",
+						nextStatus
+					);
+					const isNowCompleted = plugin.statusManager.isCompletedStatus(nextStatus);
+					updateStatusVisuals(updatedTask, nextStatus, isNowCompleted);
 				}
-
-				if (statusConfig?.icon) {
-					statusDot.addClass("task-card__status-dot--icon");
-					statusDot.empty();
-					setIcon(statusDot, statusConfig.icon);
-				} else {
-					statusDot.removeClass("task-card__status-dot--icon");
-					statusDot.empty();
-				}
-
-				if (statusConfig?.color) {
-					card.style.setProperty("--current-status-color", statusConfig.color);
-				} else {
-					card.style.removeProperty("--current-status-color");
-				}
-
-				const nextStatus = plugin.statusManager.getNextStatus(effectiveStatus);
-				const nextStatusConfig = plugin.statusManager.getStatusConfig(nextStatus);
-				if (nextStatusConfig?.color) {
-					card.style.setProperty("--next-status-color", nextStatusConfig.color);
-				} else {
-					card.style.removeProperty("--next-status-color");
-				}
-
-				const checkbox = card.querySelector(".task-card__checkbox") as HTMLInputElement | null;
-				if (checkbox) {
-					checkbox.checked = isCompleted;
-				}
-
-				updateCardCompletionState(card, updatedTask, plugin, isCompleted, effectiveStatus);
-			};
-
-			if (task.recurrence) {
-				// For recurring tasks, toggle completion for the target date
-				const updatedTask = await plugin.toggleRecurringTaskComplete(task, targetDate);
-				const newEffectiveStatus = getEffectiveTaskStatus(updatedTask, targetDate, plugin.statusManager.getCompletedStatuses()[0]);
-				const isNowCompleted = plugin.statusManager.isCompletedStatus(newEffectiveStatus);
-				updateStatusVisuals(updatedTask, newEffectiveStatus, isNowCompleted);
-			} else {
-				// For regular tasks, cycle to next/previous status based on shift key
-				const freshTask = await plugin.cacheManager.getTaskInfo(task.path);
-				if (!freshTask) {
-					new Notice("Task not found");
-					return;
-				}
-				const currentStatus = freshTask.status || plugin.settings.defaultTaskStatus;
-				const nextStatus = e.shiftKey
-					? plugin.statusManager.getPreviousStatus(currentStatus)
-					: plugin.statusManager.getNextStatus(currentStatus);
-				const updatedTask = await plugin.updateTaskProperty(freshTask, "status", nextStatus);
-				const isNowCompleted = plugin.statusManager.isCompletedStatus(nextStatus);
-				updateStatusVisuals(updatedTask, nextStatus, isNowCompleted);
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				console.error("Error cycling task status:", {
+					error: errorMessage,
+					taskPath: task.path,
+				});
+				new Notice(`Failed to update task status: ${errorMessage}`);
 			}
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error("Error cycling task status:", { error: errorMessage, taskPath: task.path });
-			new Notice(`Failed to update task status: ${errorMessage}`);
-		}
+		})();
 	};
 }
 
@@ -330,9 +419,18 @@ function updateCardCompletionState(
 ): void {
 	card.classList.toggle("task-card--completed", isCompleted);
 	card.classList.toggle("task-card--archived", !!task.archived);
-	card.classList.toggle("task-card--actively-tracked", plugin.getActiveTimeSession(task) !== null);
+	card.classList.toggle(
+		"task-card--actively-tracked",
+		plugin.getActiveTimeSession(task) !== null
+	);
 	card.classList.toggle("task-card--recurring", !!task.recurrence);
-	card.classList.toggle("task-card--chevron-left", plugin.settings?.subtaskChevronPosition === "left");
+	card.classList.toggle(
+		"task-card--chevron-left",
+		plugin.settings?.subtaskChevronPosition === "left"
+	);
+	const hasDetails = taskHasDetails(task);
+	card.classList.toggle("task-card--has-details", hasDetails);
+	card.dataset.hasDetails = hasDetails ? "true" : "false";
 
 	for (const className of Array.from(card.classList)) {
 		if (className.startsWith("task-card--priority-")) {
@@ -372,18 +470,43 @@ function createPriorityClickHandler(
 		e.stopPropagation();
 		const menu = new PriorityContextMenu({
 			currentValue: task.priority,
-			onSelect: async (newPriority) => {
-				try {
-					await plugin.updateTaskProperty(task, "priority", newPriority);
-				} catch (error) {
-					console.error("Error updating priority:", error);
-					new Notice("Failed to update priority");
-				}
+			onSelect: (newPriority) => {
+				void (async () => {
+					try {
+						await plugin.updateTaskProperty(task, "priority", newPriority);
+					} catch (error) {
+						console.error("Error updating priority:", error);
+						new Notice("Failed to update priority");
+					}
+				})();
 			},
 			plugin: plugin,
 		});
 		menu.show(e);
 	};
+}
+
+function configurePriorityIndicator(
+	priorityDot: HTMLElement,
+	priorityConfig: PriorityConfig,
+	plugin: TaskNotesPlugin
+): void {
+	priorityDot.style.borderColor = priorityConfig.color;
+	priorityDot.setAttribute(
+		"aria-label",
+		tTaskCard(plugin, "priorityAriaLabel", {
+			label: priorityConfig.label,
+		})
+	);
+	priorityDot.replaceChildren();
+	priorityDot.classList.toggle("task-card__priority-dot--icon", !!priorityConfig.icon);
+
+	if (priorityConfig.icon) {
+		setIcon(priorityDot, priorityConfig.icon);
+	} else {
+		priorityDot.removeAttribute("data-icon");
+		priorityDot.classList.remove("has-icon");
+	}
 }
 
 /**
@@ -399,16 +522,22 @@ function createRecurrenceClickHandler(
 			currentValue: typeof task.recurrence === "string" ? task.recurrence : undefined,
 			currentAnchor: task.recurrence_anchor || "scheduled",
 			scheduledDate: task.scheduled,
-			onSelect: async (newRecurrence, anchor) => {
-				try {
-					await plugin.updateTaskProperty(task, "recurrence", newRecurrence || undefined);
-					if (anchor !== undefined) {
-						await plugin.updateTaskProperty(task, "recurrence_anchor", anchor);
+			onSelect: (newRecurrence, anchor) => {
+				void (async () => {
+					try {
+						await plugin.updateTaskProperty(
+							task,
+							"recurrence",
+							newRecurrence || undefined
+						);
+						if (anchor !== undefined) {
+							await plugin.updateTaskProperty(task, "recurrence_anchor", anchor);
+						}
+					} catch (error) {
+						console.error("Error updating recurrence:", error);
+						new Notice("Failed to update recurrence");
 					}
-				} catch (error) {
-					console.error("Error updating recurrence:", error);
-					new Notice("Failed to update recurrence");
-				}
+				})();
 			},
 			app: plugin.app,
 			plugin: plugin,
@@ -420,18 +549,21 @@ function createRecurrenceClickHandler(
 /**
  * Creates a click handler for reminder indicator
  */
-function createReminderClickHandler(
-	task: TaskInfo,
-	plugin: TaskNotesPlugin
-): () => void {
+function createReminderClickHandler(task: TaskInfo, plugin: TaskNotesPlugin): () => void {
 	return () => {
-		const modal = new ReminderModal(plugin.app, plugin, task, async (reminders) => {
-			try {
-				await plugin.updateTaskProperty(task, "reminders", reminders.length > 0 ? reminders : undefined);
-			} catch (error) {
-				console.error("Error updating reminders:", error);
-				new Notice("Failed to update reminders");
-			}
+		const modal = new ReminderModal(plugin.app, plugin, task, (reminders) => {
+			void (async () => {
+				try {
+					await plugin.updateTaskProperty(
+						task,
+						"reminders",
+						reminders.length > 0 ? reminders : undefined
+					);
+				} catch (error) {
+					console.error("Error updating reminders:", error);
+					new Notice("Failed to update reminders");
+				}
+			})();
 		});
 		modal.open();
 	};
@@ -440,17 +572,16 @@ function createReminderClickHandler(
 /**
  * Creates a click handler for project indicator
  */
-function createProjectClickHandler(
-	task: TaskInfo,
-	plugin: TaskNotesPlugin
-): () => Promise<void> {
-	return async () => {
-		try {
-			await plugin.applyProjectSubtaskFilter(task);
-		} catch (error) {
-			console.error("Error filtering project subtasks:", error);
-			new Notice("Failed to filter project subtasks");
-		}
+function createProjectClickHandler(task: TaskInfo, plugin: TaskNotesPlugin): () => void {
+	return () => {
+		void (async () => {
+			try {
+				await plugin.applyProjectSubtaskFilter(task);
+			} catch (error) {
+				console.error("Error filtering project subtasks:", error);
+				new Notice("Failed to filter project subtasks");
+			}
+		})();
 	};
 }
 
@@ -462,23 +593,25 @@ function createChevronClickHandler(
 	plugin: TaskNotesPlugin,
 	card: HTMLElement,
 	chevron: HTMLElement
-): () => Promise<void> {
-	return async () => {
-		try {
-			if (!plugin.expandedProjectsService) {
-				new Notice("Service not available. Please try reloading the plugin.");
-				return;
+): () => void {
+	return () => {
+		void (async () => {
+			try {
+				if (!plugin.expandedProjectsService) {
+					new Notice("Service not available. Please try reloading the plugin.");
+					return;
+				}
+				const newExpanded = plugin.expandedProjectsService.toggle(task.path);
+				chevron.classList.toggle("task-card__chevron--expanded", newExpanded);
+				const newTooltip = getChevronTooltip(plugin, newExpanded);
+				chevron.setAttribute("aria-label", newTooltip);
+				setTooltip(chevron, newTooltip, { placement: "top" });
+				await toggleSubtasks(card, task, plugin, newExpanded);
+			} catch (error) {
+				console.error("Error toggling subtasks:", error);
+				new Notice("Failed to toggle subtasks");
 			}
-			const newExpanded = plugin.expandedProjectsService.toggle(task.path);
-			chevron.classList.toggle("task-card__chevron--expanded", newExpanded);
-			const newTooltip = getChevronTooltip(plugin, newExpanded);
-			chevron.setAttribute("aria-label", newTooltip);
-			setTooltip(chevron, newTooltip, { placement: "top" });
-			await toggleSubtasks(card, task, plugin, newExpanded);
-		} catch (error) {
-			console.error("Error toggling subtasks:", error);
-			new Notice("Failed to toggle subtasks");
-		}
+		})();
 	};
 }
 
@@ -490,827 +623,13 @@ function createBlockingToggleClickHandler(
 	plugin: TaskNotesPlugin,
 	card: HTMLElement,
 	toggle: HTMLElement
-): () => Promise<void> {
-	return async () => {
-		const expanded = toggle.classList.toggle("task-card__blocking-toggle--expanded");
-		await toggleBlockingTasks(card, task, plugin, expanded);
+): () => void {
+	return () => {
+		void (async () => {
+			const expanded = toggle.classList.toggle("task-card__blocking-toggle--expanded");
+			await toggleBlockingTasks(card, task, plugin, expanded);
+		})();
 	};
-}
-
-/**
- * Helper function to attach date context menu click handlers
- */
-function attachDateClickHandler(
-	span: HTMLElement,
-	task: TaskInfo,
-	plugin: TaskNotesPlugin,
-	dateType: "due" | "scheduled"
-): void {
-	prepareInteractiveControl(span);
-	span.addEventListener("click", (e) => {
-		e.stopPropagation(); // Don't trigger card click
-		const currentValue = dateType === "due" ? task.due : task.scheduled;
-		const menu = new DateContextMenu({
-			currentValue: getDatePart(currentValue || ""),
-			currentTime: getTimePart(currentValue || ""),
-			onSelect: async (dateValue, timeValue) => {
-				try {
-					let finalValue: string | undefined;
-					if (!dateValue) {
-						finalValue = undefined;
-					} else if (timeValue) {
-						finalValue = `${dateValue}T${timeValue}`;
-					} else {
-						finalValue = dateValue;
-					}
-					await plugin.updateTaskProperty(task, dateType, finalValue);
-				} catch (error) {
-					const errorMessage = error instanceof Error ? error.message : String(error);
-					console.error(`Error updating ${dateType} date:`, errorMessage);
-					const noticeKey =
-						dateType === "due"
-							? "contextMenus.task.notices.updateDueDateFailure"
-							: "contextMenus.task.notices.updateScheduledFailure";
-					new Notice(plugin.i18n.translate(noticeKey, { message: errorMessage }));
-				}
-			},
-			plugin,
-			app: plugin.app,
-		});
-		menu.show(e as MouseEvent);
-	});
-}
-
-/**
- * Get default visible properties when no custom configuration is provided.
- * Returns user-configured property names (e.g., "task-status" if user customized the status field).
- *
- * @param plugin - The plugin instance with fieldMapper
- * @returns Array of user-configured property names
- */
-function getDefaultVisibleProperties(plugin: TaskNotesPlugin): string[] {
-	// Combine FieldMapping properties with special properties
-	const internalDefaults = [
-		...DEFAULT_INTERNAL_VISIBLE_PROPERTIES,
-		"tags", // Special property (not in FieldMapping)
-		"blocked", // Special property (computed from blockedBy)
-		"blocking", // Special property (not in FieldMapping)
-		"googleCalendarSync", // Special property (shows if task is synced to Google Calendar)
-	];
-
-	return convertInternalToUserProperties(internalDefaults, plugin);
-}
-
-interface ChecklistProgress {
-	completed: number;
-	total: number;
-	percent: number;
-}
-
-/**
- * Get checklist progress from Obsidian's metadata cache listItems.
- * Uses parsed metadata only (no vault body reads) for better performance.
- */
-function getChecklistProgress(taskPath: string, plugin: TaskNotesPlugin): ChecklistProgress | null {
-	const file = plugin.app.vault.getAbstractFileByPath(taskPath);
-	if (!(file instanceof TFile)) return null;
-
-	const fileCache = plugin.app.metadataCache.getFileCache(file);
-	return calculateChecklistProgress(fileCache);
-}
-
-/**
- * Calculate first-level checklist progress from cached list items.
- * Only top-level task list items are counted (nested subtasks are ignored).
- */
-function calculateChecklistProgress(cache: CachedMetadata | null): ChecklistProgress | null {
-	const listItems = cache?.listItems;
-	if (!Array.isArray(listItems) || listItems.length === 0) {
-		return null;
-	}
-
-	let total = 0;
-	let completed = 0;
-
-	for (const item of listItems) {
-		if (!item || typeof item.task !== "string") continue;
-
-		// Obsidian uses parent >= 0 for nested list items.
-		const isNested = typeof item.parent === "number" && item.parent >= 0;
-		if (isNested) continue;
-
-		total += 1;
-		// Count only explicit checked boxes as complete ([x] / [X]).
-		// Other task markers (e.g. [-], [>]) are treated as not complete.
-		if (item.task.toLowerCase() === "x") {
-			completed += 1;
-		}
-	}
-
-	if (total === 0) {
-		return null;
-	}
-
-	return {
-		completed,
-		total,
-		percent: Math.round((completed / total) * 100),
-	};
-}
-
-/**
- * Property renderer function type for better type safety
- */
-type PropertyRenderer = (
-	element: HTMLElement,
-	value: unknown,
-	task: TaskInfo,
-	plugin: TaskNotesPlugin,
-	options?: Partial<TaskCardOptions>
-) => void;
-
-/**
- * Property renderers for cleaner separation of concerns
- */
-const PROPERTY_RENDERERS: Record<string, PropertyRenderer> = {
-	due: (element, value, task, plugin, options) => {
-		if (typeof value === "string") {
-			renderDueDateProperty(element, value, task, plugin, options?.propertyLabels);
-		}
-	},
-	scheduled: (element, value, task, plugin, options) => {
-		if (typeof value === "string") {
-			renderScheduledDateProperty(element, value, task, plugin, options?.propertyLabels);
-		}
-	},
-	projects: (element, value, task, plugin) => {
-		if (Array.isArray(value)) {
-			const linkServices: LinkServices = {
-				metadataCache: plugin.app.metadataCache,
-				workspace: plugin.app.workspace,
-				sourcePath: task.path,
-			};
-			renderProjectLinks(element, value as string[], linkServices);
-		}
-	},
-	contexts: (element, value, _, plugin) => {
-		if (Array.isArray(value)) {
-			const tagServices: TagServices = {
-				onTagClick: async (context, _event) => {
-					// Remove @ prefix if present for search
-					const searchTag = context.startsWith("@") ? context.slice(1) : context;
-					const success = await plugin.openTagsPane(`#${searchTag}`);
-					if (!success) {
-						console.log("Could not open search pane, context clicked:", context);
-					}
-				},
-			};
-			renderContextsValue(element, value, tagServices);
-		}
-	},
-	tags: (element, value, _, plugin) => {
-		if (Array.isArray(value)) {
-			// Filter out identifying tags if setting is enabled and using tag-based identification
-			let tagsToRender = value;
-			if (
-				plugin.settings.taskIdentificationMethod === "tag" &&
-				plugin.settings.hideIdentifyingTagsInCards
-			) {
-				tagsToRender = value.filter(
-					(tag) =>
-						!FilterUtils.matchesHierarchicalTagExact(
-							tag,
-							plugin.settings.taskTag,
-						),
-				);
-			}
-
-			// Only render if there are tags to display
-			if (tagsToRender.length > 0) {
-				const tagServices: TagServices = {
-					onTagClick: async (tag, _event) => {
-						// Remove # prefix if present for search
-						const searchTag = tag.startsWith("#") ? tag.slice(1) : tag;
-						const success = await plugin.openTagsPane(`#${searchTag}`);
-						if (!success) {
-							console.log("Could not open search pane, tag clicked:", tag);
-						}
-					},
-				};
-				renderTagsValue(element, tagsToRender, tagServices);
-			}
-		}
-	},
-	timeEstimate: (element, value, _, plugin) => {
-		if (typeof value === "number") {
-			element.textContent = `${plugin.formatTime(value)} estimated`;
-		}
-	},
-	totalTrackedTime: (element, value, _, plugin) => {
-		if (typeof value === "number" && value > 0) {
-			element.textContent = `${plugin.formatTime(value)} tracked`;
-		}
-	},
-	recurrence: (element, value, _task, plugin, options) => {
-		if (typeof value === "string") {
-			element.textContent = getRecurrenceTooltip(plugin, value, options?.propertyLabels);
-		}
-	},
-	completeInstances: (element, value, task) => {
-		if (Array.isArray(value) && value.length > 0) {
-			const count = value.length;
-			const skippedCount = task.skipped_instances?.length || 0;
-			const total = count + skippedCount;
-
-			if (total > 0) {
-				const completionRate = Math.round((count / total) * 100);
-				element.textContent = `✓ ${count} completed (${completionRate}%)`;
-				element.classList.add("task-card__metadata-pill--completed-instances");
-			} else {
-				element.textContent = `✓ ${count} completed`;
-				element.classList.add("task-card__metadata-pill--completed-instances");
-			}
-		}
-	},
-	skippedInstances: (element, value, task) => {
-		if (Array.isArray(value) && value.length > 0) {
-			const count = value.length;
-			element.textContent = `⊘ ${count} skipped`;
-			element.classList.add("task-card__metadata-pill--skipped-instances");
-		}
-	},
-	completedDate: (element, value, task, plugin, options) => {
-		if (typeof value === "string") {
-			const label = getTaskCardPropertyLabel("completedDate", plugin, options?.propertyLabels);
-			element.textContent = `${label}: ${formatDateTimeForDisplay(value, {
-				dateFormat: "MMM d",
-				showTime: false,
-				userTimeFormat: plugin.settings.calendarViewSettings.timeFormat,
-			})}`;
-		}
-	},
-	dateCreated: (element, value, task, plugin, options) => {
-		if (typeof value === "string") {
-			const label = getTaskCardPropertyLabel("dateCreated", plugin, options?.propertyLabels);
-			element.textContent = `${label}: ${formatDateTimeForDisplay(value, {
-				dateFormat: "MMM d",
-				showTime: false,
-				userTimeFormat: plugin.settings.calendarViewSettings.timeFormat,
-			})}`;
-		}
-	},
-	dateModified: (element, value, task, plugin, options) => {
-		if (typeof value === "string") {
-			const label = getTaskCardPropertyLabel("dateModified", plugin, options?.propertyLabels);
-			element.textContent = `${label}: ${formatDateTimeForDisplay(value, {
-				dateFormat: "MMM d",
-				showTime: false,
-				userTimeFormat: plugin.settings.calendarViewSettings.timeFormat,
-			})}`;
-		}
-	},
-	blocked: (element, value, task, plugin, options) => {
-		// Show blocked status with count if available
-		if (value === true) {
-			const blockedCount = task.blockedBy?.length ?? 0;
-			const label = getTaskCardPropertyLabel("blocked", plugin, options?.propertyLabels);
-			element.textContent = blockedCount > 0 ? `${label} (${blockedCount})` : label;
-			element.classList.add("task-card__metadata-pill--blocked");
-		}
-	},
-	blocking: (element, value, task, plugin, options) => {
-		// Show blocking status with count if available
-		if (value === true) {
-			const blockingCount = task.blocking?.length ?? 0;
-			const label = getTaskCardPropertyLabel("blocking", plugin, options?.propertyLabels);
-			element.textContent = blockingCount > 0 ? `${label} (${blockingCount})` : label;
-			element.classList.add("task-card__metadata-pill--blocking");
-		}
-	},
-	blockedBy: (element, value, task, plugin) => {
-		// Show list of tasks blocking this one
-		if (Array.isArray(value) && value.length > 0) {
-			element.createEl("span", { text: "Blocked by: " });
-			const linksContainer = element.createEl("span");
-			value.forEach((dep, idx) => {
-				if (idx > 0) linksContainer.appendChild(document.createTextNode(", "));
-				// Each dependency has a path property
-				const depPath = typeof dep === "string" ? dep : dep.path;
-				if (depPath) {
-					const linkEl = linksContainer.createEl("a", {
-						cls: "internal-link",
-						attr: { href: depPath },
-					});
-					linkEl.textContent = depPath.split("/").pop()?.replace(".md", "") || depPath;
-					linkEl.addEventListener("click", (e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						plugin.app.workspace.openLinkText(depPath, "", false);
-					});
-				}
-			});
-		}
-	},
-	blockingTasks: (element, value, task, plugin) => {
-		// Show list of tasks that this one is blocking
-		if (Array.isArray(value) && value.length > 0) {
-			element.createEl("span", { text: "Blocking: " });
-			const linksContainer = element.createEl("span");
-			value.forEach((path, idx) => {
-				if (idx > 0) linksContainer.appendChild(document.createTextNode(", "));
-				const linkEl = linksContainer.createEl("a", {
-					cls: "internal-link",
-					attr: { href: path },
-				});
-				linkEl.textContent = path.split("/").pop()?.replace(".md", "") || path;
-				linkEl.addEventListener("click", (e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					plugin.app.workspace.openLinkText(path, "", false);
-				});
-			});
-		}
-	},
-	timeEntries: (element, value, _, plugin) => {
-		// Show total tracked time from time entries
-		if (Array.isArray(value) && value.length > 0) {
-			const totalTime = calculateTotalTimeSpent(value);
-			if (totalTime > 0) {
-				element.textContent = `${plugin.formatTime(totalTime)} tracked (${value.length} ${value.length === 1 ? "entry" : "entries"})`;
-			}
-		}
-	},
-	reminders: (element, value) => {
-		// Show reminder count
-		if (Array.isArray(value) && value.length > 0) {
-			element.textContent = `${value.length} ${value.length === 1 ? "reminder" : "reminders"}`;
-		}
-	},
-	icsEventId: (element, value) => {
-		// Show calendar event indicator
-		if (Array.isArray(value) && value.length > 0) {
-			element.textContent = `Linked to ${value.length} calendar ${value.length === 1 ? "event" : "events"}`;
-		}
-	},
-	checklistProgress: (element, _value, task, plugin) => {
-		const progress = getChecklistProgress(task.path, plugin);
-		if (!progress) {
-			return;
-		}
-
-		const progressEl = element.createEl("span", { cls: "task-card__progress" });
-		const progressBar = progressEl.createEl("span", { cls: "task-card__progress-bar" });
-		const progressFill = progressBar.createEl("span", { cls: "task-card__progress-fill" });
-		progressFill.style.width = `${progress.percent}%`;
-		if (progress.percent > 0 && progress.percent < 5) {
-			progressFill.style.minWidth = "2px";
-		}
-
-		progressEl.createEl("span", {
-			cls: "task-card__progress-label",
-			text: `${progress.completed}/${progress.total}`,
-		});
-
-		setTooltip(progressEl, `${progress.percent}% complete (${progress.completed}/${progress.total})`, {
-			placement: "top",
-		});
-	},
-};
-
-/**
- * Render a single property as a metadata element with improved organization
- */
-function renderPropertyMetadata(
-	container: HTMLElement,
-	propertyId: string,
-	task: TaskInfo,
-	plugin: TaskNotesPlugin,
-	options: Partial<TaskCardOptions> = {}
-): HTMLElement | null {
-	const value = getTaskCardPropertyValue(task, propertyId, plugin);
-
-	if (!hasValidValue(value)) {
-		return null;
-	}
-
-	const element = container.createEl("span", {
-		cls: `task-card__metadata-property task-card__metadata-property--${propertyId.replace(":", "-")}`,
-	});
-
-	try {
-		// Check if this is a user-configured name for a mapped field
-		const mappingKey = plugin.fieldMapper.lookupMappingKey(propertyId);
-
-		// Try using the mapping key as the renderer key
-		const rendererKey = mappingKey || propertyId;
-
-		if (rendererKey in PROPERTY_RENDERERS) {
-			PROPERTY_RENDERERS[rendererKey](element, value, task, plugin, options);
-		} else if (propertyId.startsWith("user:")) {
-			renderUserProperty(element, propertyId, value, plugin);
-		} else {
-			// Fallback: render arbitrary property with generic format
-			renderGenericProperty(
-				element,
-				propertyId,
-				value,
-				plugin,
-				getTaskCardPropertyLabel(propertyId, plugin, options.propertyLabels)
-			);
-		}
-
-		// If the renderer didn't add any content, remove the element and return null
-		if (!element.textContent && !element.hasChildNodes()) {
-			element.remove();
-			return null;
-		}
-
-		return element;
-	} catch (error) {
-		console.warn(`TaskCard: Error rendering property ${propertyId}:`, error);
-		element.textContent = `${propertyId}: (error)`;
-		return element;
-	}
-}
-
-/**
- * Check if a value is valid for display
- */
-function hasValidValue(value: any): boolean {
-	return !isEmptyCardDisplayValue(value);
-}
-
-
-/**
- * Render user-defined property with type safety and enhanced link/tag support
- */
-function renderUserProperty(
-	element: HTMLElement,
-	propertyId: string,
-	value: unknown,
-	plugin: TaskNotesPlugin
-): void {
-	const fieldId = propertyId.slice(5);
-	const userField = plugin.settings.userFields?.find((f) => f.id === fieldId);
-
-	if (!userField) {
-		element.textContent = `${fieldId}: (not found)`;
-		return;
-	}
-
-	const fieldName = userField.displayName || fieldId;
-
-	// Add field label
-	element.createEl("span", { text: `${fieldName}: ` });
-
-	// Create value container
-	const valueContainer = element.createEl("span", {
-		cls: "task-card__metadata-value",
-	});
-
-	// Create shared services to avoid redundant object creation
-	const linkServices: LinkServices = {
-		metadataCache: plugin.app.metadataCache,
-		workspace: plugin.app.workspace,
-	};
-
-	// Check if the value might contain links or tags and render appropriately
-	if (typeof value === "string" && value.trim() !== "") {
-		const stringValue = value.trim();
-
-		// Check if string contains links or tags
-		if (
-			stringValue.includes("[[") ||
-			stringValue.includes("](") ||
-			(stringValue.includes("#") && /\s#\w+|#\w+/.test(stringValue))
-		) {
-			renderTextWithLinks(valueContainer, stringValue, linkServices);
-		} else {
-			// Format according to field type
-			const displayValue = formatUserPropertyValue(value, userField);
-			valueContainer.textContent = displayValue;
-		}
-	} else if (userField.type === "list" && Array.isArray(value)) {
-		// Handle list fields - avoid recursive renderPropertyValue call to prevent stack overflow
-		const validItems = value.map((item) => extractBasesValue(item)).filter(hasValidValue);
-		validItems.forEach((item, idx) => {
-			if (idx > 0) valueContainer.appendChild(document.createTextNode(", "));
-
-			// Render each list item directly instead of recursively calling renderPropertyValue
-			if (typeof item === "string" && item.trim() !== "") {
-				const itemString = item.trim();
-				if (
-					itemString.includes("[[") ||
-					itemString.includes("](") ||
-					(itemString.includes("#") && /\s#\w+|#\w+/.test(itemString))
-				) {
-					const itemContainer = valueContainer.createEl("span");
-					renderTextWithLinks(itemContainer, itemString, linkServices);
-				} else {
-					valueContainer.appendChild(document.createTextNode(String(item)));
-				}
-			} else {
-				valueContainer.appendChild(document.createTextNode(String(item)));
-			}
-		});
-	} else {
-		// Use standard formatting for other types or empty values
-		const displayValue = formatUserPropertyValue(value, userField);
-		if (displayValue.trim() !== "") {
-			valueContainer.textContent = displayValue;
-		} else {
-			valueContainer.textContent = "(empty)";
-		}
-	}
-}
-
-/**
- * User field type definition for better type safety
- */
-interface UserField {
-	id: string;
-	key: string;
-	type: "text" | "number" | "date" | "boolean" | "list";
-	displayName?: string;
-}
-
-/**
- * Render generic property with smart formatting and link detection
- */
-function renderGenericProperty(
-	element: HTMLElement,
-	propertyId: string,
-	value: unknown,
-	plugin?: TaskNotesPlugin,
-	displayNameOverride?: string
-): void {
-	const displayName = resolveTaskCardPropertyLabel(propertyId, {}, displayNameOverride);
-
-	// Add property label
-	element.createEl("span", { text: `${displayName}: ` });
-
-	// Create value container
-	const valueContainer = element.createEl("span", {
-		cls: "task-card__metadata-value",
-	});
-
-	if (Array.isArray(value)) {
-		// Handle arrays - render each item separately to detect links
-		// Extract Bases values from array items as they may be wrapped objects
-		const filtered = value
-			.map((v) => extractBasesValue(v))
-			.filter(hasValidValue);
-		filtered.forEach((item, idx) => {
-			if (idx > 0) valueContainer.appendChild(document.createTextNode(", "));
-			renderPropertyValue(valueContainer, item, plugin);
-		});
-	} else {
-		renderPropertyValue(valueContainer, value, plugin);
-	}
-}
-
-/**
- * Render a single property value with link detection
- */
-function renderPropertyValue(
-	container: HTMLElement,
-	value: unknown,
-	plugin?: TaskNotesPlugin
-): void {
-	if (!hasValidValue(value)) {
-		return;
-	}
-
-	if (plugin && renderBasesValue(container, value, plugin.app.renderContext)) {
-		return;
-	}
-
-	if (typeof value === "string" && plugin) {
-		// Check if string contains links and render appropriately
-		const linkServices: LinkServices = {
-			metadataCache: plugin.app.metadataCache,
-			workspace: plugin.app.workspace,
-		};
-
-		// If the string contains wikilinks, markdown links, or tags, render with enhanced support
-		if (
-			value.includes("[[") ||
-			(value.includes("[") && value.includes("](")) ||
-			(value.includes("#") && /\s#\w+|#\w+/.test(value))
-		) {
-			renderTextWithLinks(container, value, linkServices, {
-				onTagClick: async (tag, _event) => {
-					// Remove # prefix if present for search
-					const searchTag = tag.startsWith("#") ? tag.slice(1) : tag;
-					const success = await plugin.openTagsPane(`#${searchTag}`);
-					if (!success) {
-						console.log(
-							"Could not open search pane, generic property tag clicked:",
-							tag
-						);
-					}
-				},
-			});
-			return;
-		}
-
-		// Plain string
-		container.appendChild(document.createTextNode(value));
-		return;
-	}
-
-	let displayValue: string;
-
-	if (typeof value === "object" && value !== null) {
-		// Handle Date objects specially
-		if (value instanceof Date) {
-			displayValue = formatDateTimeForDisplay(value.toISOString(), {
-				dateFormat: "MMM d, yyyy",
-				timeFormat: "",
-				showTime: false,
-			});
-		}
-		// Handle objects with meaningful toString methods or simple key-value pairs
-		else if (typeof value.toString === "function" && value.toString() !== "[object Object]") {
-			displayValue = value.toString();
-		}
-		// For simple objects with a few key-value pairs, show them nicely
-		else {
-			const entries = Object.entries(value as Record<string, any>);
-			if (entries.length <= 3) {
-				displayValue = entries.map(([k, v]) => `${k}: ${v}`).join(", ");
-			} else {
-				// Fallback to JSON for complex objects
-				displayValue = JSON.stringify(value);
-			}
-		}
-	} else if (typeof value === "boolean") {
-		// Handle booleans with checkmark/x symbols for better visual
-		displayValue = value ? "✓" : "✗";
-	} else if (typeof value === "number") {
-		// Format numbers with appropriate precision
-		displayValue = Number.isInteger(value) ? String(value) : value.toFixed(2);
-	} else {
-		// Handle strings and other primitive types
-		displayValue = String(value);
-	}
-
-	// Truncate very long values to keep card readable
-	if (displayValue.length > 100) {
-		displayValue = displayValue.substring(0, 97) + "...";
-	}
-
-	container.appendChild(document.createTextNode(displayValue));
-}
-
-/**
- * Format user property value based on field type with improved type safety
- */
-function formatUserPropertyValue(value: unknown, userField: UserField): string {
-	if (value === null || value === undefined) return "";
-
-	try {
-		switch (userField.type) {
-			case "text":
-			case "number":
-				return String(value);
-			case "date":
-				return formatDateTimeForDisplay(String(value), {
-					dateFormat: "MMM d, yyyy",
-					timeFormat: "",
-					showTime: false,
-				});
-			case "boolean":
-				return value ? "✓" : "✗";
-			case "list":
-				if (Array.isArray(value)) {
-					return (value as unknown[]).flat(2).join(", ");
-				}
-				return String(value);
-			default:
-				return String(value);
-		}
-	} catch (error) {
-		console.warn("TaskCard: Error formatting user property value:", error);
-		return String(value);
-	}
-}
-
-/**
- * Render due date property with click handler
- */
-function renderDueDateProperty(
-	element: HTMLElement,
-	due: string,
-	task: TaskInfo,
-	plugin: TaskNotesPlugin,
-	propertyLabels?: Record<string, string>
-): void {
-	const isDueToday = isTodayTimeAware(due);
-	const isCompleted = plugin.statusManager.isCompletedStatus(task.status);
-	const hideCompletedFromOverdue = plugin.settings?.hideCompletedFromOverdue ?? true;
-	const isDueOverdue = isOverdueTimeAware(due, isCompleted, hideCompletedFromOverdue);
-
-	const userTimeFormat = plugin.settings.calendarViewSettings.timeFormat;
-	const dueLabel = getTaskCardPropertyLabel("due", plugin, propertyLabels);
-	let dueDateText = "";
-	if (isDueToday) {
-		const timeDisplay = formatDateTimeForDisplay(due, {
-			dateFormat: "",
-			showTime: true,
-			userTimeFormat,
-		});
-		dueDateText =
-			timeDisplay.trim() === ""
-				? tTaskCard(plugin, "dueToday", { label: dueLabel })
-				: tTaskCard(plugin, "dueTodayAt", { label: dueLabel, time: timeDisplay });
-	} else if (isDueOverdue) {
-		const display = formatDateTimeForDisplay(due, {
-			dateFormat: "MMM d",
-			showTime: true,
-			userTimeFormat,
-		});
-		dueDateText = tTaskCard(plugin, "dueOverdue", { label: dueLabel, display });
-	} else {
-		const display = formatDateTimeForDisplay(due, {
-			dateFormat: "MMM d",
-			showTime: true,
-			userTimeFormat,
-		});
-		dueDateText = tTaskCard(plugin, "dueLabel", { label: dueLabel, display });
-	}
-
-	element.textContent = dueDateText;
-	element.classList.add("task-card__metadata-date", "task-card__metadata-date--due");
-	if (isDueOverdue) {
-		element.classList.add("task-card__metadata-date--overdue");
-	}
-	element.dataset.tnAction = "edit-date";
-	element.dataset.tnDateType = "due";
-
-	attachDateClickHandler(element, task, plugin, "due");
-}
-
-/**
- * Render scheduled date property with click handler
- */
-function renderScheduledDateProperty(
-	element: HTMLElement,
-	scheduled: string,
-	task: TaskInfo,
-	plugin: TaskNotesPlugin,
-	propertyLabels?: Record<string, string>
-): void {
-	const isScheduledToday = isTodayTimeAware(scheduled);
-	const isCompleted = plugin.statusManager.isCompletedStatus(task.status);
-	const hideCompletedFromOverdue = plugin.settings?.hideCompletedFromOverdue ?? true;
-	const isScheduledPast = isOverdueTimeAware(scheduled, isCompleted, hideCompletedFromOverdue);
-
-	const userTimeFormat = plugin.settings.calendarViewSettings.timeFormat;
-	const scheduledLabel = getTaskCardPropertyLabel("scheduled", plugin, propertyLabels);
-	let scheduledDateText = "";
-	if (isScheduledToday) {
-		const timeDisplay = formatDateTimeForDisplay(scheduled, {
-			dateFormat: "",
-			showTime: true,
-			userTimeFormat,
-		});
-		scheduledDateText =
-			timeDisplay.trim() === ""
-				? tTaskCard(plugin, "scheduledToday", { label: scheduledLabel })
-				: tTaskCard(plugin, "scheduledTodayAt", { label: scheduledLabel, time: timeDisplay });
-	} else if (isScheduledPast) {
-		const display = formatDateTimeForDisplay(scheduled, {
-			dateFormat: "MMM d",
-			showTime: true,
-			userTimeFormat,
-		});
-		scheduledDateText = tTaskCard(plugin, "scheduledPast", { label: scheduledLabel, display });
-	} else {
-		const display = formatDateTimeForDisplay(scheduled, {
-			dateFormat: "MMM d",
-			showTime: true,
-			userTimeFormat,
-		});
-		scheduledDateText = tTaskCard(plugin, "scheduledLabel", { label: scheduledLabel, display });
-	}
-
-	element.textContent = scheduledDateText;
-	element.classList.add("task-card__metadata-date", "task-card__metadata-date--scheduled");
-	if (isScheduledPast) {
-		element.classList.add("task-card__metadata-date--past");
-	}
-	element.dataset.tnAction = "edit-date";
-	element.dataset.tnDateType = "scheduled";
-
-	attachDateClickHandler(element, task, plugin, "scheduled");
-}
-
-/**
- * Show or hide metadata line based on whether it has content
- */
-function updateMetadataVisibility(metadataLine: HTMLElement, metadataElements: HTMLElement[]): void {
-	metadataLine.style.display = metadataElements.length > 0 ? "" : "none";
 }
 
 /**
@@ -1344,12 +663,10 @@ export function createTaskCard(
 	options: Partial<TaskCardOptions> = {}
 ): HTMLElement {
 	const opts = { ...DEFAULT_TASK_CARD_OPTIONS, ...options };
-	// Use fresh UTC-anchored "today" if no targetDate provided
-	// This ensures recurring tasks show correct completion status for the current day
-	const targetDate = opts.targetDate || (() => {
-		const todayLocal = new Date();
-		return new Date(Date.UTC(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate()));
-	})();
+	// View renderers pass an explicit target date. Standalone cards, such as the
+	// task-note card, default scheduled-anchor recurring tasks to their current
+	// scheduled occurrence instead of assuming today.
+	const targetDate = opts.targetDate || getDefaultTaskCardTargetDate(task);
 
 	// Determine effective status for recurring tasks
 	const effectiveStatus = task.recurrence
@@ -1361,11 +678,12 @@ export function createTaskCard(
 
 	// Main container with BEM class structure
 	// Use span for inline layout to ensure proper inline flow in CodeMirror
-	const card = document.createElement(layout === "inline" ? "span" : "div");
+	const card = activeDocument.createElement(layout === "inline" ? "span" : "div");
 
 	// Store task path for circular reference detection
-	(card as any)._taskPath = task.path;
-	(card as any)._taskCardOptions = opts;
+	const taskCardElement = card as TaskCardElement;
+	taskCardElement._taskPath = task.path;
+	taskCardElement._taskCardOptions = opts;
 
 	const isActivelyTracked = plugin.getActiveTimeSession(task) !== null;
 	const isCompleted = task.recurrence
@@ -1375,6 +693,7 @@ export function createTaskCard(
 		? task.skipped_instances?.includes(formatDateForStorage(targetDate)) || false // Direct check of skipped_instances
 		: false; // Only recurring tasks can have skipped instances
 	const isRecurring = !!task.recurrence;
+	const hasDetails = taskHasDetails(task);
 
 	// Build BEM class names
 	const cardClasses = ["task-card"];
@@ -1390,15 +709,16 @@ export function createTaskCard(
 	if (task.archived) cardClasses.push("task-card--archived");
 	if (isActivelyTracked) cardClasses.push("task-card--actively-tracked");
 	if (isRecurring) cardClasses.push("task-card--recurring");
+	if (hasDetails) cardClasses.push("task-card--has-details");
 
 	// Add priority modifier
 	if (task.priority) {
-		cardClasses.push(`task-card--priority-${task.priority}`);
+		cardClasses.push(`task-card--priority-${sanitizeForCssClass(task.priority)}`);
 	}
 
 	// Add status modifier
 	if (effectiveStatus) {
-		cardClasses.push(`task-card--status-${effectiveStatus}`);
+		cardClasses.push(`task-card--status-${sanitizeForCssClass(effectiveStatus)}`);
 	}
 
 	// Chevron position preference
@@ -1416,10 +736,13 @@ export function createTaskCard(
 	card.dataset.taskPath = task.path;
 	card.dataset.key = task.path; // For DOMReconciler compatibility
 	card.dataset.status = effectiveStatus;
+	card.dataset.hasDetails = hasDetails ? "true" : "false";
 
 	// Create main row container for horizontal layout
 	// Use span for inline layout to maintain inline flow
-	const mainRow = card.createEl(layout === "inline" ? "span" : "div", { cls: "task-card__main-row" });
+	const mainRow = card.createEl(layout === "inline" ? "span" : "div", {
+		cls: "task-card__main-row",
+	});
 
 	// Apply priority and status colors as CSS custom properties
 	const priorityConfig = plugin.priorityManager.getPriorityConfig(task.priority);
@@ -1460,7 +783,10 @@ export function createTaskCard(
 	// Add click handler to cycle through statuses
 	if (statusDot) {
 		prepareInteractiveControl(statusDot);
-		statusDot.addEventListener("click", createStatusCycleHandler(task, plugin, card, statusDot, targetDate));
+		statusDot.addEventListener(
+			"click",
+			createStatusCycleHandler(task, plugin, card, statusDot, targetDate)
+		);
 	}
 
 	// Priority indicator dot (conditional based on visible properties)
@@ -1470,23 +796,34 @@ export function createTaskCard(
 	if (task.priority && priorityConfig && shouldShowPriority) {
 		const priorityDot = mainRow.createEl("span", {
 			cls: "task-card__priority-dot",
-			attr: { "aria-label": tTaskCard(plugin, "priorityAriaLabel", { label: priorityConfig.label }) },
+			attr: {
+				"aria-label": tTaskCard(plugin, "priorityAriaLabel", {
+					label: priorityConfig.label,
+				}),
+			},
 		});
-		priorityDot.style.borderColor = priorityConfig.color;
+		configurePriorityIndicator(priorityDot, priorityConfig, plugin);
 		prepareInteractiveControl(priorityDot);
 		priorityDot.addEventListener("click", createPriorityClickHandler(task, plugin));
 	}
 
 	// Content container
-	const contentContainer = mainRow.createEl(layout === "inline" ? "span" : "div", { cls: "task-card__content" });
+	const contentContainer = mainRow.createEl(layout === "inline" ? "span" : "div", {
+		cls: "task-card__content",
+	});
 
 	// Badge area for secondary indicators (only in non-inline mode)
-	const badgesContainer = layout !== "inline" ? mainRow.createEl("div", { cls: "task-card__badges" }) : null;
+	const badgesContainer =
+		layout !== "inline" ? mainRow.createEl("div", { cls: "task-card__badges" }) : null;
 
 	if (badgesContainer && opts.showSecondaryBadges) {
 		// Recurring indicator
 		if (task.recurrence) {
-			const recurrenceTooltip = getRecurrenceTooltip(plugin, task.recurrence, opts.propertyLabels);
+			const recurrenceTooltip = getRecurrenceTooltip(
+				plugin,
+				task.recurrence,
+				opts.propertyLabels
+			);
 			createBadgeIndicator({
 				container: badgesContainer,
 				className: "task-card__recurring-indicator",
@@ -1506,6 +843,16 @@ export function createTaskCard(
 				icon: "bell",
 				tooltip: reminderTooltip,
 				onClick: createReminderClickHandler(task, plugin),
+			});
+		}
+
+		// Details indicator
+		if (hasDetails) {
+			createBadgeIndicator({
+				container: badgesContainer,
+				className: "task-card__details-indicator",
+				icon: "file-text",
+				tooltip: tTaskCard(plugin, "detailsTooltip"),
 			});
 		}
 
@@ -1529,7 +876,7 @@ export function createTaskCard(
 					icon: "chevron-right",
 					tooltip: getChevronTooltip(plugin, isExpanded),
 					onClick: () => {
-						const chevron = card.querySelector(".task-card__chevron") as HTMLElement | null;
+						const chevron = card.querySelector<HTMLElement>(".task-card__chevron");
 						if (chevron) {
 							void createChevronClickHandler(task, plugin, card, chevron)();
 						}
@@ -1548,14 +895,17 @@ export function createTaskCard(
 		// Blocking toggle
 		const hasBlocking = task.blocking && task.blocking.length > 0;
 		if (hasBlocking) {
-			const toggleLabel = plugin.i18n.translate("ui.taskCard.blockingToggle", { count: task.blocking!.length });
+			const blockingCount = task.blocking?.length ?? 0;
+			const toggleLabel = plugin.i18n.translate("ui.taskCard.blockingToggle", {
+				count: blockingCount,
+			});
 			createBadgeIndicator({
 				container: badgesContainer,
 				className: "task-card__blocking-toggle is-visible",
 				icon: "git-branch",
 				tooltip: toggleLabel,
 				onClick: () => {
-					const toggle = card.querySelector(".task-card__blocking-toggle") as HTMLElement | null;
+					const toggle = card.querySelector<HTMLElement>(".task-card__blocking-toggle");
 					if (toggle) {
 						void createBlockingToggleClickHandler(task, plugin, card, toggle)();
 					}
@@ -1577,15 +927,18 @@ export function createTaskCard(
 	setTooltip(contextIcon, tTaskCard(plugin, "taskOptions"), { placement: "top" });
 	prepareInteractiveControl(contextIcon);
 
-	contextIcon.addEventListener("click", async (e) => {
+	contextIcon.addEventListener("click", (e) => {
 		e.stopPropagation();
 		e.preventDefault();
-		await showTaskContextMenu(e as MouseEvent, task.path, plugin, targetDate);
+		void showTaskContextMenu(e, task.path, plugin, targetDate);
 	});
 
 	// First line: Task title
-	const titleEl = contentContainer.createEl(layout === "inline" ? "span" : "div", { cls: "task-card__title" });
-	const titleTextEl = titleEl.createSpan({ cls: "task-card__title-text", text: task.title });
+	const titleEl = contentContainer.createEl(layout === "inline" ? "span" : "div", {
+		cls: "task-card__title",
+	});
+	const titleTextEl = titleEl.createSpan({ cls: "task-card__title-text" });
+	renderTaskTitle(titleTextEl, task, plugin);
 
 	if (isCompleted) {
 		titleEl.classList.add("completed");
@@ -1593,7 +946,9 @@ export function createTaskCard(
 	}
 
 	// Second line: Metadata (dynamic based on visible properties)
-	const metadataLine = contentContainer.createEl(layout === "inline" ? "span" : "div", { cls: "task-card__metadata" });
+	const metadataLine = contentContainer.createEl(layout === "inline" ? "span" : "div", {
+		cls: "task-card__metadata",
+	});
 	const metadataElements: HTMLElement[] = [];
 
 	// Get properties to display
@@ -1623,13 +978,9 @@ export function createTaskCard(
 					cls: "task-card__metadata-pill task-card__metadata-pill--blocked",
 					text: pillText,
 				});
-				setTooltip(
-					blockedPill,
-					plugin.i18n.translate("ui.taskCard.blockedBadgeTooltip"),
-					{
-						placement: "top",
-					}
-				);
+				setTooltip(blockedPill, plugin.i18n.translate("ui.taskCard.blockedBadgeTooltip"), {
+					placement: "top",
+				});
 				metadataElements.push(blockedPill);
 			}
 			continue;
@@ -1674,13 +1025,7 @@ export function createTaskCard(
 			continue;
 		}
 
-		const element = renderPropertyMetadata(
-			metadataLine,
-			propertyId,
-			task,
-			plugin,
-			opts
-		);
+		const element = renderPropertyMetadata(metadataLine, propertyId, task, plugin, opts);
 		if (element) {
 			metadataElements.push(element);
 		}
@@ -1693,10 +1038,10 @@ export function createTaskCard(
 	const { clickHandler, dblclickHandler, contextmenuHandler } = createTaskClickHandler({
 		task,
 		plugin,
-		contextMenuHandler: async (e) => {
+		contextMenuHandler: (e) => {
 			const path = card.dataset.taskPath;
 			if (!path) return;
-			await showTaskContextMenu(e, path, plugin, targetDate);
+			void showTaskContextMenu(e, path, plugin, targetDate);
 		},
 	});
 
@@ -1763,8 +1108,8 @@ function showFileContextMenu(event: MouseEvent, file: TFile, plugin: TaskNotesPl
 	let populated = false;
 	try {
 		plugin.app.workspace.trigger("file-menu", menu, file, "tasknotes-bases-view");
-		populated = (menu as any).items?.length > 0;
-	} catch (error) {
+		populated = ((menu as MenuWithItems).items?.length ?? 0) > 0;
+	} catch {
 		populated = false;
 	}
 
@@ -1773,14 +1118,14 @@ function showFileContextMenu(event: MouseEvent, file: TFile, plugin: TaskNotesPl
 			item.setTitle("Open");
 			item.setIcon("file-text");
 			item.onClick(() => {
-				plugin.app.workspace.getLeaf(false).openFile(file);
+				void plugin.app.workspace.getLeaf(false).openFile(file);
 			});
 		});
 		menu.addItem((item) => {
 			item.setTitle("Open in new tab");
 			item.setIcon("external-link");
 			item.onClick(() => {
-				plugin.app.workspace.openLinkText(file.path, "", true);
+				void plugin.app.workspace.openLinkText(file.path, "", true);
 			});
 		});
 	}
@@ -1799,12 +1144,10 @@ export function updateTaskCard(
 	options: Partial<TaskCardOptions> = {}
 ): void {
 	const opts = { ...DEFAULT_TASK_CARD_OPTIONS, ...options };
-	// Use fresh UTC-anchored "today" if no targetDate provided
-	// This ensures recurring tasks show correct completion status for the current day
-	const targetDate = opts.targetDate || (() => {
-		const todayLocal = new Date();
-		return new Date(Date.UTC(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate()));
-	})();
+	// View renderers pass an explicit target date. Standalone cards, such as the
+	// task-note card, default scheduled-anchor recurring tasks to their current
+	// scheduled occurrence instead of assuming today.
+	const targetDate = opts.targetDate || getDefaultTaskCardTargetDate(task);
 
 	// Update effective status
 	const effectiveStatus = task.recurrence
@@ -1820,6 +1163,7 @@ export function updateTaskCard(
 		? task.skipped_instances?.includes(formatDateForStorage(targetDate)) || false // Direct check of skipped_instances
 		: false; // Only recurring tasks can have skipped instances
 	const isRecurring = !!task.recurrence;
+	const hasDetails = taskHasDetails(task);
 
 	// Build BEM class names for update
 	const cardClasses = ["task-card"];
@@ -1830,15 +1174,16 @@ export function updateTaskCard(
 	if (task.archived) cardClasses.push("task-card--archived");
 	if (isActivelyTracked) cardClasses.push("task-card--actively-tracked");
 	if (isRecurring) cardClasses.push("task-card--recurring");
+	if (hasDetails) cardClasses.push("task-card--has-details");
 
 	// Add priority modifier
 	if (task.priority) {
-		cardClasses.push(`task-card--priority-${task.priority}`);
+		cardClasses.push(`task-card--priority-${sanitizeForCssClass(task.priority)}`);
 	}
 
 	// Add status modifier
 	if (effectiveStatus) {
-		cardClasses.push(`task-card--status-${effectiveStatus}`);
+		cardClasses.push(`task-card--status-${sanitizeForCssClass(effectiveStatus)}`);
 	}
 
 	// Chevron position preference
@@ -1848,6 +1193,7 @@ export function updateTaskCard(
 
 	element.className = cardClasses.join(" ");
 	element.dataset.status = effectiveStatus;
+	element.dataset.hasDetails = hasDetails ? "true" : "false";
 
 	// Get the main row container
 	const mainRow = element.querySelector(".task-card__main-row") as HTMLElement;
@@ -1924,28 +1270,10 @@ export function updateTaskCard(
 			// Add priority dot if task has priority but no dot exists
 			const priorityDot = mainRow.createEl("span", {
 				cls: "task-card__priority-dot",
-				attr: { "aria-label": `Priority: ${priorityConfig.label}` },
 			});
-			priorityDot.style.borderColor = priorityConfig.color;
+			configurePriorityIndicator(priorityDot, priorityConfig, plugin);
 			prepareInteractiveControl(priorityDot);
-
-			// Add click context menu for priority
-			priorityDot.addEventListener("click", (e) => {
-				e.stopPropagation(); // Don't trigger card click
-				const menu = new PriorityContextMenu({
-					currentValue: task.priority,
-					onSelect: async (newPriority) => {
-						try {
-							await plugin.updateTaskProperty(task, "priority", newPriority);
-						} catch (error) {
-							console.error("Error updating priority:", error);
-							new Notice("Failed to update priority");
-						}
-					},
-					plugin: plugin,
-				});
-				menu.show(e as MouseEvent);
-			});
+			priorityDot.addEventListener("click", createPriorityClickHandler(task, plugin));
 
 			// Insert after status dot if it exists, otherwise after checkbox
 			const statusDotForInsert = element.querySelector(".task-card__status-dot");
@@ -1959,28 +1287,12 @@ export function updateTaskCard(
 			}
 		} else if (existingPriorityDot) {
 			// Update existing priority dot
-			existingPriorityDot.style.borderColor = priorityConfig.color;
-			existingPriorityDot.setAttribute("aria-label", `Priority: ${priorityConfig.label}`);
+			configurePriorityIndicator(existingPriorityDot, priorityConfig, plugin);
 
 			// Remove old event listener and add new one with updated task data
 			const newPriorityDot = existingPriorityDot.cloneNode(true) as HTMLElement;
 			prepareInteractiveControl(newPriorityDot);
-			newPriorityDot.addEventListener("click", (e) => {
-				e.stopPropagation(); // Don't trigger card click
-				const menu = new PriorityContextMenu({
-					currentValue: task.priority,
-					onSelect: async (newPriority) => {
-						try {
-							await plugin.updateTaskProperty(task, "priority", newPriority);
-						} catch (error) {
-							console.error("Error updating priority:", error);
-							new Notice("Failed to update priority");
-						}
-					},
-					plugin: plugin,
-				});
-				menu.show(e as MouseEvent);
-			});
+			newPriorityDot.addEventListener("click", createPriorityClickHandler(task, plugin));
 			existingPriorityDot.replaceWith(newPriorityDot);
 		}
 	} else if (existingPriorityDot) {
@@ -2015,6 +1327,14 @@ export function updateTaskCard(
 		onClick: createReminderClickHandler(task, plugin),
 	});
 
+	// Update details indicator
+	updateBadgeIndicator(element, ".task-card__details-indicator", {
+		shouldExist: hasDetails,
+		className: "task-card__details-indicator",
+		icon: "file-text",
+		tooltip: tTaskCard(plugin, "detailsTooltip"),
+	});
+
 	// Update project indicator and chevron (async)
 	plugin.projectSubtasksService
 		.isTaskUsedAsProject(task.path)
@@ -2044,7 +1364,7 @@ export function updateTaskCard(
 					icon: "chevron-right",
 					tooltip: getChevronTooltip(plugin, isExpanded),
 					onClick: () => {
-						const chevron = element.querySelector(".task-card__chevron") as HTMLElement | null;
+						const chevron = element.querySelector<HTMLElement>(".task-card__chevron");
 						if (chevron) {
 							void createChevronClickHandler(task, plugin, element, chevron)();
 						}
@@ -2059,18 +1379,20 @@ export function updateTaskCard(
 			} else if (!showChevron && existingChevron) {
 				existingChevron.remove();
 				// Clean up subtasks container
-				const subtasksContainer = element.querySelector(".task-card__subtasks") as HTMLElement;
+				const subtasksContainer =
+					element.querySelector<HTMLElement>(".task-card__subtasks");
 				if (subtasksContainer) {
-					const clickHandler = (subtasksContainer as any)._clickHandler;
+					const taskCardSubtasks = subtasksContainer as TaskCardElement;
+					const clickHandler = taskCardSubtasks._clickHandler;
 					if (clickHandler) {
 						subtasksContainer.removeEventListener("click", clickHandler);
-						delete (subtasksContainer as any)._clickHandler;
+						delete taskCardSubtasks._clickHandler;
 					}
 					subtasksContainer.remove();
 				}
 			}
 		})
-		.catch((error: any) => {
+		.catch((error: unknown) => {
 			console.error("Error checking if task is used as project in update:", error);
 		});
 
@@ -2105,7 +1427,7 @@ export function updateTaskCard(
 	const titleContainer = element.querySelector(".task-card__title") as HTMLElement;
 	const titleIsCompleted = isCompleted;
 	if (titleText) {
-		titleText.textContent = task.title;
+		renderTaskTitle(titleText, task, plugin);
 		titleText.classList.toggle("completed", titleIsCompleted);
 	}
 	if (titleContainer) {
@@ -2194,106 +1516,18 @@ export function updateTaskCard(
 }
 
 /**
- * Confirmation modal for task deletion
- */
-class DeleteTaskConfirmationModal extends Modal {
-	private task: TaskInfo;
-	private onConfirm: () => Promise<void>;
-
-	constructor(app: App, task: TaskInfo, onConfirm: () => Promise<void>) {
-		super(app);
-		this.task = task;
-		this.onConfirm = onConfirm;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-
-		contentEl.createEl("h2", { text: "Delete Task" });
-
-		const description = contentEl.createEl("p");
-		description.appendText('Are you sure you want to delete the task "');
-		description.createEl("strong", { text: this.task.title });
-		description.appendText('"?');
-
-		contentEl.createEl("p", {
-			cls: "mod-warning",
-			text: "This action cannot be undone. The task file will be permanently deleted.",
-		});
-
-		const buttonContainer = contentEl.createEl("div", { cls: "modal-button-container" });
-		buttonContainer.style.display = "flex";
-		buttonContainer.style.gap = "10px";
-		buttonContainer.style.justifyContent = "flex-end";
-		buttonContainer.style.marginTop = "20px";
-
-		const cancelButton = buttonContainer.createEl("button", { text: "Cancel" });
-		cancelButton.addEventListener("click", () => {
-			this.close();
-		});
-
-		const deleteButton = buttonContainer.createEl("button", {
-			text: "Delete",
-			cls: "mod-warning",
-		});
-		deleteButton.style.backgroundColor = "var(--color-red)";
-		deleteButton.style.color = "white";
-
-		deleteButton.addEventListener("click", async () => {
-			try {
-				await this.onConfirm();
-				this.close();
-				new Notice("Task deleted successfully");
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
-				new Notice(`Failed to delete task: ${errorMessage}`);
-				console.error("Error in delete confirmation:", error);
-			}
-		});
-
-		// Focus the cancel button by default
-		cancelButton.focus();
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-/**
- * Show delete confirmation modal and handle task deletion
- */
-export async function showDeleteConfirmationModal(
-	task: TaskInfo,
-	plugin: TaskNotesPlugin
-): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const modal = new DeleteTaskConfirmationModal(plugin.app, task, async () => {
-			try {
-				await plugin.taskService.deleteTask(task);
-				resolve();
-			} catch (error) {
-				reject(error);
-			}
-		});
-		modal.open();
-	});
-}
-
-/**
  * Clean up event listeners and resources for a task card
  */
 export function cleanupTaskCard(card: HTMLElement): void {
 	// Clean up subtasks container if it exists
-	const subtasksContainer = card.querySelector(".task-card__subtasks") as HTMLElement;
+	const subtasksContainer = card.querySelector<HTMLElement>(".task-card__subtasks");
 	if (subtasksContainer) {
 		// Clean up the click handler
-		const clickHandler = (subtasksContainer as any)._clickHandler;
+		const taskCardSubtasks = subtasksContainer as TaskCardElement;
+		const clickHandler = taskCardSubtasks._clickHandler;
 		if (clickHandler) {
 			subtasksContainer.removeEventListener("click", clickHandler);
-			delete (subtasksContainer as any)._clickHandler;
+			delete taskCardSubtasks._clickHandler;
 		}
 	}
 
@@ -2329,7 +1563,8 @@ export async function toggleSubtasks(
 				subtasksContainer.addEventListener("click", clickHandler);
 
 				// Store handler reference for cleanup
-				(subtasksContainer as any)._clickHandler = clickHandler;
+				(subtasksContainer as TaskCardElement)._clickHandler = clickHandler;
+				bindNestedCardHoverState(subtasksContainer, card);
 
 				card.appendChild(subtasksContainer);
 			}
@@ -2373,8 +1608,7 @@ export async function toggleSubtasks(
 					return;
 				}
 
-				// Sort subtasks
-				const sortedSubtasks = plugin.projectSubtasksService.sortTasks(subtasks);
+				const sortedSubtasks = sortExpandedRelationshipTasks(card, subtasks, plugin);
 
 				// Build parent chain by traversing up the DOM hierarchy
 				const buildParentChain = (element: HTMLElement): string[] => {
@@ -2382,8 +1616,8 @@ export async function toggleSubtasks(
 					let current = element.closest(".task-card");
 
 					while (current) {
-						const taskPath = (current as any)._taskPath;
-						if (taskPath) {
+						const taskPath = (current as TaskCardElement)._taskPath;
+						if (typeof taskPath === "string") {
 							chain.unshift(taskPath); // Add to beginning
 						}
 						// Find next parent task card (skip current)
@@ -2428,10 +1662,11 @@ export async function toggleSubtasks(
 			// Hide subtasks
 			if (subtasksContainer) {
 				// Clean up the click handler
-				const clickHandler = (subtasksContainer as any)._clickHandler;
+				const taskCardSubtasks = subtasksContainer as TaskCardElement;
+				const clickHandler = taskCardSubtasks._clickHandler;
 				if (clickHandler) {
 					subtasksContainer.removeEventListener("click", clickHandler);
-					delete (subtasksContainer as any)._clickHandler;
+					delete taskCardSubtasks._clickHandler;
 				}
 
 				// Remove the container (this will also clean up child elements and their listeners)
@@ -2450,10 +1685,11 @@ export async function toggleBlockingTasks(
 	plugin: TaskNotesPlugin,
 	shouldExpand: boolean
 ): Promise<void> {
-	let container = card.querySelector(".task-card__blocking") as HTMLElement | null;
+	let container = card.querySelector<HTMLElement>(".task-card__blocking");
 
 	if (!shouldExpand) {
 		if (container) {
+			card.classList.remove("task-card--nested-interactive-hover");
 			container.remove();
 		}
 		return;
@@ -2461,6 +1697,7 @@ export async function toggleBlockingTasks(
 
 	if (!container) {
 		container = card.createDiv({ cls: "task-card__blocking" });
+		bindNestedCardHoverState(container, card);
 		// Prevent clicks within the dependency list from bubbling up to the parent card.
 		// Otherwise both the blocking task and the dependent task modals would open.
 		container.addEventListener("click", (event) => event.stopPropagation());
@@ -2501,7 +1738,9 @@ export async function toggleBlockingTasks(
 				getStoredTaskCardOptions(card)
 			);
 			dependentCard.classList.add("task-card--dependency");
-			container!.appendChild(dependentCard);
+			if (container) {
+				container.appendChild(dependentCard);
+			}
 		});
 	} catch (error) {
 		console.error("Error loading blocking tasks:", error);
@@ -2535,10 +1774,10 @@ export async function refreshParentTaskSubtasks(
 				// Cache has been updated
 				break;
 			}
-		} catch (error) {
+		} catch {
 			// Cache not ready yet
 		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await new Promise((resolve) => window.setTimeout(resolve, 10));
 		attempts++;
 	}
 

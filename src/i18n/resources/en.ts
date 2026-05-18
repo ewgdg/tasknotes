@@ -67,8 +67,8 @@ export const en: TranslationTree = {
 			loading: "Loading agenda...",
 			dayToggle: "Toggle day",
 			overdueToggle: "Toggle overdue section",
-			expandAllDays: "Expand All Days",
-			collapseAllDays: "Collapse All Days",
+			expandAllDays: "Expand all days",
+			collapseAllDays: "Collapse all days",
 			notices: {
 				calendarNotReady: "Calendar service not ready yet",
 				calendarRefreshed: "Calendar subscriptions refreshed",
@@ -77,7 +77,8 @@ export const en: TranslationTree = {
 			empty: {
 				noItemsScheduled: "No items scheduled",
 				noItemsFound: "No items found",
-				helpText: "Create tasks with due or scheduled dates, or add notes to see them here.",
+				helpText:
+					"Create tasks with due or scheduled dates, or add notes to see them here.",
 			},
 			contextMenu: {
 				showOverdueSection: "Show overdue section",
@@ -91,8 +92,8 @@ export const en: TranslationTree = {
 		},
 		taskList: {
 			title: "Tasks",
-			expandAllGroups: "Expand All Groups",
-			collapseAllGroups: "Collapse All Groups",
+			expandAllGroups: "Expand all groups",
+			collapseAllGroups: "Collapse all groups",
 			noTasksFound: "No tasks found for the selected filters.",
 			reorder: {
 				scope: {
@@ -114,13 +115,18 @@ export const en: TranslationTree = {
 			},
 			empty: {
 				noNotesFound: "No notes found",
-				helpText: "No notes found for the selected date. Try selecting a different date in the Mini Calendar view or create some notes.",
+				helpText:
+					"No notes found for the selected date. Try selecting a different date in the mini calendar view or create some notes.",
 			},
 			loading: "Loading notes...",
 			refreshButtonAriaLabel: "Refresh notes list",
 		},
 		miniCalendar: {
-			title: "Mini Calendar",
+			title: "Mini calendar",
+			contextMenu: {
+				openDailyNote: "Open daily note",
+				openWeeklyNote: "Open weekly note",
+			},
 		},
 		advancedCalendar: {
 			title: "Calendar",
@@ -140,7 +146,7 @@ export const en: TranslationTree = {
 			},
 			buttons: {
 				refresh: "Refresh",
-				refreshHint: "Refresh Calendar Subscriptions",
+				refreshHint: "Refresh calendar subscriptions",
 			},
 			notices: {
 				icsServiceNotAvailable: "ICS subscription service not available",
@@ -173,7 +179,7 @@ export const en: TranslationTree = {
 			contextMenus: {
 				openTask: "Open task",
 				deleteTimeEntry: "Delete time entry",
-				deleteTimeEntryTitle: "Delete Time Entry",
+				deleteTimeEntryTitle: "Delete time entry",
 				deleteTimeEntryConfirm:
 					"Are you sure you want to delete this time entry{duration}? This action cannot be undone.",
 				deleteButton: "Delete",
@@ -181,7 +187,7 @@ export const en: TranslationTree = {
 			},
 		},
 		basesCalendar: {
-			title: "Bases Calendar",
+			title: "Bases calendar",
 			today: "Today",
 			buttonText: {
 				month: "M",
@@ -207,17 +213,18 @@ export const en: TranslationTree = {
 			},
 			settings: {
 				groups: {
-					dateNavigation: "Date Navigation",
+					dateNavigation: "Date navigation",
 					events: "Events",
 					layout: "Layout",
 					propertyBasedEvents: "Property-based events",
 					calendarSubscriptions: "Calendar subscriptions",
-					googleCalendars: "Google Calendars",
-					microsoftCalendars: "Microsoft Calendars",
+					googleCalendars: "Google calendars",
+					microsoftCalendars: "Microsoft calendars",
 				},
 				dateNavigation: {
 					navigateToDate: "Navigate to date",
-					navigateToDatePlaceholder: "YYYY-MM-DD (e.g., 2025-01-15) - leave empty to use property",
+					navigateToDatePlaceholder:
+						"YYYY-MM-DD (e.g., 2025-01-15) - leave empty to use property",
 					navigateToDateFromProperty: "Navigate to date from property",
 					navigateToDateFromPropertyPlaceholder: "Select a date property (optional)",
 					propertyNavigationStrategy: "Property navigation strategy",
@@ -231,12 +238,17 @@ export const en: TranslationTree = {
 					showScheduledTasks: "Show scheduled tasks",
 					showDueTasks: "Show due tasks",
 					showRecurringTasks: "Show recurring tasks",
+					showCompletedRecurringInstances: "Show completed recurring instances",
+					showSkippedRecurringInstances: "Show skipped recurring instances",
 					showTimeEntries: "Show time entries",
 					showTimeblocks: "Show timeblocks",
 					showPropertyBasedEvents: "Show property-based events",
 				},
 				layout: {
 					calendarView: "Calendar view",
+					heightMode: "Height mode",
+					heightModeFill: "Fill container",
+					heightModeAuto: "Auto height",
 					customDayCount: "Custom day count",
 					listDayCount: "List day count",
 					dayStartTime: "Day start time",
@@ -285,7 +297,7 @@ export const en: TranslationTree = {
 			addCard: "+ Add a card",
 			noTasks: "No tasks",
 			uncategorized: "Uncategorized",
-			noProject: "No Project",
+			noProject: "No project",
 			reorder: {
 				scope: {
 					column: 'column "{group}"',
@@ -298,9 +310,12 @@ export const en: TranslationTree = {
 			},
 			errors: {
 				loadingBoard: "Error loading board.",
-				noGroupBy: "Kanban view requires a 'Group by' property to be configured. Click the 'Sort' button and select a property under 'Group by'.",
-				formulaGroupingReadOnly: "Cannot move tasks between formula-based columns. Formula values are computed and cannot be directly modified.",
-				formulaSwimlaneReadOnly: "Cannot move tasks between formula-based swimlanes. Formula values are computed and cannot be directly modified.",
+				noGroupBy:
+					"Kanban view requires a 'group by' property to be configured. Click the 'sort' button and select a property under 'group by'.",
+				formulaGroupingReadOnly:
+					"Cannot move tasks between formula-based columns. Formula values are computed and cannot be directly modified.",
+				formulaSwimlaneReadOnly:
+					"Cannot move tasks between formula-based swimlanes. Formula values are computed and cannot be directly modified.",
 			},
 			columnTitle: "Untitled",
 		},
@@ -318,24 +333,38 @@ export const en: TranslationTree = {
 					short: "short",
 					long: "long",
 				},
-				breakComplete: "Break complete! Ready for the next pomodoro?",
+				breakComplete: "Break complete! Ready for the next Pomodoro?",
+			},
+			meta: {
+				ready: "{time} planned · {count} completed today",
+				running: "{time} left",
+				paused: "{type} paused · {time} left",
+				breakReady: "{type} ready · {time} planned",
+			},
+			timer: {
+				editLabel: "Edit timer duration",
+				inputLabel: "Timer duration",
 			},
 			buttons: {
 				start: "Start",
+				startFocus: "Start focus",
 				pause: "Pause",
 				stop: "Stop",
 				resume: "Resume",
-				startShortBreak: "Start Short Break",
-				startLongBreak: "Start Long Break",
+				startShortBreak: "Start short break",
+				startLongBreak: "Start long break",
 				skipBreak: "Skip break",
 				chooseTask: "Choose task...",
 				changeTask: "Change task...",
 				clearTask: "Clear task",
 				selectDifferentTask: "Select a different task",
+				addMinute: "Add one minute",
+				subtractMinute: "Subtract one minute",
 			},
 			notices: {
 				noTasks: "No unarchived tasks found. Create some tasks first.",
 				loadFailed: "Failed to load tasks",
+				invalidDuration: "Enter a duration like 10, 10:30, or 1:30:00.",
 			},
 			statsLabel: "completed today",
 		},
@@ -343,6 +372,11 @@ export const en: TranslationTree = {
 			title: "Pomodoro stats",
 			heading: "Pomodoro statistics",
 			refresh: "Refresh",
+			basesMigration: {
+				title: "Want a base view?",
+				description:
+					"Pomodoro base views use daily notes frontmatter; to see this history in the generated Pomodoro statistics base, migrate Pomodoro data in settings, then set storage to daily notes.",
+			},
 			sections: {
 				overview: "Overview",
 				today: "Today",
@@ -352,24 +386,24 @@ export const en: TranslationTree = {
 			},
 			overviewCards: {
 				todayPomos: {
-					label: "Today's Pomos",
+					label: "Today's pomos",
 					change: {
 						more: "{count} more than yesterday",
 						less: "{count} fewer than yesterday",
 					},
 				},
 				totalPomos: {
-					label: "Total Pomos",
+					label: "Total pomos",
 				},
 				todayFocus: {
-					label: "Today's Focus",
+					label: "Today's focus",
 					change: {
 						more: "{duration} more than yesterday",
 						less: "{duration} less than yesterday",
 					},
 				},
 				totalFocus: {
-					label: "Total Focus Duration",
+					label: "Total focus duration",
 				},
 			},
 			stats: {
@@ -390,40 +424,40 @@ export const en: TranslationTree = {
 		},
 		stats: {
 			title: "Statistics",
-			taskProjectStats: "Task & Project Statistics",
+			taskProjectStats: "Task & project statistics",
 			sections: {
 				filters: "Filters",
 				overview: "Overview",
 				today: "Today",
-				thisWeek: "This Week",
-				thisMonth: "This Month",
-				projectBreakdown: "Project Breakdown",
-				dateRange: "Date Range",
+				thisWeek: "This week",
+				thisMonth: "This month",
+				projectBreakdown: "Project breakdown",
+				dateRange: "Date range",
 			},
 			filters: {
-				minTime: "Min Time (minutes)",
-				allTasks: "All Tasks",
-				activeOnly: "Active Only",
-				completedOnly: "Completed Only",
+				minTime: "Min time (minutes)",
+				allTasks: "All tasks",
+				activeOnly: "Active only",
+				completedOnly: "Completed only",
 			},
 			refreshButton: "Refresh",
 			timeRanges: {
-				allTime: "All Time",
-				last7Days: "Last 7 Days",
-				last30Days: "Last 30 Days",
-				last90Days: "Last 90 Days",
-				customRange: "Custom Range",
+				allTime: "All time",
+				last7Days: "Last 7 days",
+				last30Days: "Last 30 days",
+				last90Days: "Last 90 days",
+				customRange: "Custom range",
 			},
-			resetFiltersButton: "Reset Filters",
+			resetFiltersButton: "Reset filters",
 			dateRangeFrom: "From",
 			dateRangeTo: "To",
-			noProject: "No Project",
+			noProject: "No project",
 			cards: {
-				timeTrackedEstimated: "Time Tracked / Estimated",
-				totalTasks: "Total Tasks",
-				completionRate: "Completion Rate",
-				activeProjects: "Active Projects",
-				avgTimePerTask: "Avg Time per Task",
+				timeTrackedEstimated: "Time tracked / estimated",
+				totalTasks: "Total tasks",
+				completionRate: "Completion rate",
+				activeProjects: "Active projects",
+				avgTimePerTask: "Avg time per task",
 			},
 			labels: {
 				tasks: "Tasks",
@@ -440,7 +474,8 @@ export const en: TranslationTree = {
 			header: "What's new in TaskNotes {version}",
 			viewAllLink: "View all release notes on GitHub →",
 			starMessage: "If you find TaskNotes useful, please consider giving it a star on GitHub",
-			baseFilesNotice: "> [!info] About default `.base` files\n> Updates to default generated `.base` templates do not overwrite your existing `.base` files, so your customizations stay safe.\n> If you want the newest template improvements, regenerate base files in **Settings → TaskNotes → General → Create Default Files**.",
+			baseFilesNotice:
+				"> [!info] About default `.base` files\n> Updates to default generated `.base` templates do not overwrite your existing `.base` files, so your customizations stay safe.\n> If you want the newest template improvements, regenerate base files in **Settings → TaskNotes → General → Create Default Files**.",
 		},
 	},
 	settings: {
@@ -450,18 +485,17 @@ export const en: TranslationTree = {
 		},
 		tabs: {
 			general: "General",
-			taskProperties: "Task Properties",
-			modalFields: "Modal Fields",
-			defaults: "Defaults & Templates",
+			taskProperties: "Task properties",
+			modalFields: "Modal fields",
+			defaults: "Defaults & templates",
 			appearance: "Appearance & UI",
 			features: "Features",
 			integrations: "Integrations",
 		},
 		features: {
 			inlineTasks: {
-				header: "Inline Tasks",
-				description:
-					"Settings for task links and checkbox-to-task conversion in notes.",
+				header: "Inline tasks",
+				description: "Settings for task links and checkbox-to-task conversion in notes.",
 			},
 			overlays: {
 				taskLinkToggle: {
@@ -481,13 +515,13 @@ export const en: TranslationTree = {
 						"Display an inline button next to Markdown checkboxes that converts them to TaskNotes",
 				},
 				folder: {
-					name: "Folder for converted tasks",
+					name: "Folder for inline-created tasks",
 					description:
-						"Folder where tasks converted from checkboxes will be created. Leave empty to use the default tasks folder. Use {{currentNotePath}} for the current note's folder, or {{currentNoteTitle}} for a subfolder named after the current note.",
+						"Folder where tasks created from inline commands or checkbox conversion will be created. Leave empty to use the default tasks folder. Use {{currentNotePath}} for the current note's folder, or {{currentNoteTitle}} for a subfolder named after the current note.",
 				},
 			},
 			nlp: {
-				header: "Natural Language Processing",
+				header: "Natural language processing",
 				description: "Parse dates, priorities, and other properties from text input.",
 				enable: {
 					name: "Enable natural language task input",
@@ -510,9 +544,8 @@ export const en: TranslationTree = {
 				},
 			},
 			pomodoro: {
-				header: "Pomodoro Timer",
-				description:
-					"Configure work/break intervals for the Pomodoro timer.",
+				header: "Pomodoro timer",
+				description: "Configure work/break intervals for the Pomodoro timer.",
 				workDuration: {
 					name: "Work duration",
 					description: "Duration of work intervals in minutes",
@@ -541,6 +574,10 @@ export const en: TranslationTree = {
 					name: "Pomodoro notifications",
 					description: "Show notifications when Pomodoro sessions end",
 				},
+				statusBar: {
+					name: "Show Pomodoro in status bar",
+					description: "Display the active Pomodoro countdown in Obsidian's status bar",
+				},
 				mobileSidebar: {
 					name: "Mobile sidebar",
 					description: "Where to open the Pomodoro timer on mobile devices",
@@ -550,7 +587,7 @@ export const en: TranslationTree = {
 				},
 			},
 			uiLanguage: {
-				header: "Interface Language",
+				header: "Interface language",
 				description: "Change the language of TaskNotes menus, notices, and views.",
 				dropdown: {
 					name: "UI language",
@@ -565,7 +602,8 @@ export const en: TranslationTree = {
 			},
 			dataStorage: {
 				name: "Pomodoro data storage",
-				description: "Configure where pomodoro session data is stored and how it's managed.",
+				description:
+					"Configure where Pomodoro session data is stored and how it's managed.",
 				dailyNotes: "Daily notes",
 				pluginData: "Plugin data",
 				notices: {
@@ -607,7 +645,7 @@ export const en: TranslationTree = {
 					"Keep the offset between due date and scheduled date when recurring tasks are completed",
 				resetCheckboxesName: "Reset checkboxes on recurrence",
 				resetCheckboxesDesc:
-					"Reset all markdown checkboxes in the task body when a recurring task is completed and rescheduled",
+					"Reset all Markdown checkboxes in the task body when a recurring task is completed and rescheduled",
 			},
 			timeblocking: {
 				header: "Timeblocking",
@@ -623,31 +661,32 @@ export const en: TranslationTree = {
 				usage: "Usage: Drag on the calendar to create events. Select 'Timeblock' from the context menu (only visible when timeblocking is enabled). Drag to move existing timeblocks. Resize edges to adjust duration.",
 			},
 			performance: {
-				header: "Performance & Behavior",
+				header: "Performance & behavior",
 				description: "Configure plugin performance and behavioral options.",
 			},
 			timeTrackingSection: {
-				header: "Time Tracking",
+				header: "Time tracking",
 				description: "Configure automatic time tracking behaviors.",
 			},
 			recurringSection: {
-				header: "Recurring Tasks",
+				header: "Recurring tasks",
 				description: "Configure behavior for recurring task management.",
 			},
 			debugLogging: {
-				header: "Debug Logging",
+				header: "Debug logging",
 				description: "Configure debug log output for troubleshooting.",
 				enableName: "Enable debug logging",
-				enableDesc: "Log detailed drag-and-drop and view diagnostics to the developer console. Useful for troubleshooting.",
+				enableDesc:
+					"Log detailed drag-and-drop and view diagnostics to the developer console. Useful for troubleshooting.",
 			},
 		},
 		defaults: {
 			header: {
-				basicDefaults: "Basic Defaults",
-				dateDefaults: "Date Defaults",
+				basicDefaults: "Basic defaults",
+				dateDefaults: "Date defaults",
 				defaultReminders: "Default reminders",
-				bodyTemplate: "Body Template",
-				instantTaskConversion: "Instant Task Conversion",
+				bodyTemplate: "Body template",
+				instantTaskConversion: "Instant task conversion",
 			},
 			description: {
 				basicDefaults: "Set default values for new tasks to speed up task creation.",
@@ -679,7 +718,7 @@ export const en: TranslationTree = {
 				defaultProjects: {
 					name: "Default projects",
 					description: "Default project links for new tasks",
-					selectButton: "Select Projects",
+					selectButton: "Select projects",
 					selectTooltip: "Choose project notes to link by default",
 					removeTooltip: "Remove {name} from default projects",
 				},
@@ -717,9 +756,9 @@ export const en: TranslationTree = {
 				},
 				emptyState:
 					"No default reminders configured. Add a reminder to automatically notify you about new tasks.",
-				emptyStateButton: "Add Reminder",
+				emptyStateButton: "Add reminder",
 				reminderDescription: "Reminder description",
-				unnamedReminder: "Unnamed Reminder",
+				unnamedReminder: "Unnamed reminder",
 				deleteTooltip: "Delete reminder",
 				fields: {
 					description: "Description:",
@@ -795,11 +834,12 @@ export const en: TranslationTree = {
 		},
 		general: {
 			taskStorage: {
-				header: "Task Storage",
+				header: "Task storage",
 				description: "Configure where tasks are stored and how they are identified.",
 				defaultFolder: {
 					name: "Default tasks folder",
-					description: "Default location for new tasks",
+					description:
+						"Default location for new tasks. Supports folder template variables like {{currentNotePath}} and {{currentNoteTitle}}.",
 				},
 				moveArchived: {
 					name: "Move archived tasks to folder",
@@ -812,7 +852,7 @@ export const en: TranslationTree = {
 				},
 			},
 			taskIdentification: {
-				header: "Task Identification",
+				header: "Task identification",
 				description: "Choose how TaskNotes identifies notes as tasks.",
 				identifyBy: {
 					name: "Identify tasks by",
@@ -842,22 +882,24 @@ export const en: TranslationTree = {
 				},
 			},
 			folderManagement: {
-				header: "Folder Management",
+				header: "Folder management",
 				excludedFolders: {
 					name: "Excluded folders",
-					description: "Comma-separated list of folders to exclude from task indexing and project suggestions",
+					description:
+						"Comma-separated list of folders to exclude from task indexing and project suggestions",
 				},
 			},
 			frontmatter: {
 				header: "Frontmatter",
 				description: "Configure how links are formatted in frontmatter properties.",
 				useMarkdownLinks: {
-					name: "Use markdown links in frontmatter",
-					description: "Generate markdown links ([text](path)) instead of wikilinks ([[link]]) in frontmatter properties.\n\n⚠️ Requires the 'obsidian-frontmatter-markdown-links' plugin to work correctly.",
+					name: "Use Markdown links in frontmatter",
+					description:
+						"Generate markdown links ([text](path)) instead of wikilinks ([[link]]) in frontmatter properties.\n\n⚠️ Requires the 'obsidian-frontmatter-markdown-links' plugin to work correctly.",
 				},
 			},
 			taskInteraction: {
-				header: "Task Interaction",
+				header: "Task interaction",
 				description: "Configure how clicking on tasks behaves.",
 				singleClick: {
 					name: "Single-click action",
@@ -874,11 +916,12 @@ export const en: TranslationTree = {
 				},
 			},
 			releaseNotes: {
-				header: "Release Notes",
+				header: "Release notes",
 				description: "Current version: {version}",
 				showOnUpdate: {
 					name: "Show release notes after update",
-					description: "Automatically open release notes when TaskNotes is updated to a new version",
+					description:
+						"Automatically open release notes when TaskNotes is updated to a new version",
 				},
 				viewButton: {
 					name: "View release notes",
@@ -890,18 +933,21 @@ export const en: TranslationTree = {
 		taskProperties: {
 			// Section headers for property card layout
 			sections: {
-				coreProperties: "Core Properties",
-				corePropertiesDesc: "Status and priority are the core properties that define a task's state and importance.",
-				dateProperties: "Date Properties",
+				coreProperties: "Core properties",
+				corePropertiesDesc:
+					"Status and priority are the core properties that define a task's state and importance.",
+				dateProperties: "Date properties",
 				datePropertiesDesc: "Configure when tasks are due and scheduled.",
-				organizationProperties: "Organization Properties",
+				organizationProperties: "Organization properties",
 				organizationPropertiesDesc: "Organize tasks with contexts, projects, and tags.",
-				taskDetails: "Task Details",
-				taskDetailsDesc: "Additional details like time estimates, recurrence, and reminders.",
-				metadataProperties: "Metadata Properties",
+				taskDetails: "Task details",
+				taskDetailsDesc:
+					"Additional details like time estimates, recurrence, and reminders.",
+				metadataProperties: "Metadata properties",
 				metadataPropertiesDesc: "System-managed properties for tracking task history.",
-				featureProperties: "Feature Properties",
-				featurePropertiesDesc: "Properties used by specific TaskNotes features like Pomodoro timer and calendar sync.",
+				featureProperties: "Feature properties",
+				featurePropertiesDesc:
+					"Properties used by specific TaskNotes features like Pomodoro timer and calendar sync.",
 			},
 			// Property card common fields
 			propertyCard: {
@@ -925,12 +971,12 @@ export const en: TranslationTree = {
 						"Indicates task importance. Used for sorting and filtering. Values are sorted alphabetically in Bases views, so use prefixes like 1-, 2- to control order.",
 				},
 				due: {
-					name: "Due Date",
+					name: "Due date",
 					description:
 						"The deadline by which a task must be completed. Tasks past their due date appear as overdue. Stored as a date in frontmatter.",
 				},
 				scheduled: {
-					name: "Scheduled Date",
+					name: "Scheduled date",
 					description:
 						"When you plan to work on a task. Unlike due date, this represents your intended start time. Tasks appear on the calendar at their scheduled date/time.",
 				},
@@ -950,7 +996,7 @@ export const en: TranslationTree = {
 						"Native Obsidian tags for categorizing tasks. These are stored in the tags frontmatter property and work with Obsidian's tag features.",
 				},
 				timeEstimate: {
-					name: "Time Estimate",
+					name: "Time estimate",
 					description:
 						"Estimated minutes to complete the task. Used for time-blocking and workload planning. Displayed on task cards and calendar events.",
 				},
@@ -960,7 +1006,7 @@ export const en: TranslationTree = {
 						"Pattern for repeating tasks (daily, weekly, monthly, yearly, or custom RRULE). When a recurring task is completed, its scheduled date is automatically updated to the next occurrence.",
 				},
 				recurrenceAnchor: {
-					name: "Recurrence Anchor",
+					name: "Recurrence anchor",
 					description:
 						"Controls how the next occurrence is calculated: 'scheduled' uses the scheduled date, 'completion' uses the actual completion date.",
 				},
@@ -972,100 +1018,102 @@ export const en: TranslationTree = {
 				title: {
 					name: "Title",
 					description:
-						"The task name. Can be stored in frontmatter or in the filename (when 'Store title in filename' is enabled).",
+						"The task name. Can be stored in frontmatter or in the filename (when 'store title in filename' is enabled).",
 				},
 				dateCreated: {
-					name: "Date Created",
+					name: "Date created",
 					description:
 						"Timestamp when the task was first created. Automatically set and used for sorting by creation order.",
 				},
 				dateModified: {
-					name: "Date Modified",
+					name: "Date modified",
 					description:
 						"Timestamp of the last change to the task. Automatically updated when any task property changes.",
 				},
 				completedDate: {
-					name: "Completed Date",
+					name: "Completed date",
 					description:
 						"Timestamp when the task was marked complete. Set automatically when status changes to a completed state.",
 				},
 				archiveTag: {
-					name: "Archive Tag",
+					name: "Archive tag",
 					description:
 						"Tag added to tasks when archived. Used to identify archived tasks and can trigger file movement to archive folder.",
 				},
 				timeEntries: {
-					name: "Time Entries",
+					name: "Time entries",
 					description:
 						"Records of time tracking sessions for this task. Each entry stores start and end timestamps. Used to calculate total time spent.",
 				},
 				completeInstances: {
-					name: "Complete Instances",
+					name: "Complete instances",
 					description:
 						"Completion history for recurring tasks. Stores dates when each instance was completed to prevent duplicate completions.",
 				},
 				skippedInstances: {
-					name: "Skipped Instances",
+					name: "Skipped instances",
 					description:
 						"Skipped occurrences for recurring tasks. Stores dates of instances that were skipped rather than completed.",
 				},
 				blockedBy: {
-					name: "Blocked By",
+					name: "Blocked by",
 					description:
 						"Links to tasks that must be completed before this one. Stored as wikilinks. Blocked tasks display a visual indicator.",
 				},
 				sortOrder: {
-					name: "Manual Order",
+					name: "Manual order",
 					description:
 						"Frontmatter property used for drag-to-reorder manual ordering. A view must be sorted by this property for drag-and-drop reordering to work.",
 				},
 				pomodoros: {
 					name: "Pomodoros",
 					description:
-						"Count of completed Pomodoro sessions. When data storage is set to 'Daily notes', this is written to daily notes instead of task files.",
+						"Count of completed Pomodoro sessions. When data storage is set to 'daily notes', this is written to daily notes instead of task files.",
 				},
 				icsEventId: {
-					name: "ICS Event ID",
+					name: "ICS event ID",
 					description:
 						"Unique identifier linking a note to an ICS calendar event. Added automatically when creating notes from calendar events.",
 				},
 				icsEventTag: {
-					name: "ICS Event Tag",
+					name: "ICS event tag",
 					description:
 						"Tag identifying notes created from ICS calendar events. Used to distinguish calendar-generated notes from regular tasks.",
 				},
 			},
 			// Card-specific labels
 			statusCard: {
-				valuesHeader: "Status Values",
+				valuesHeader: "Status values",
 			},
 			priorityCard: {
-				valuesHeader: "Priority Values",
+				valuesHeader: "Priority values",
 			},
 			projectsCard: {
 				defaultProjects: "Default projects:",
 				useParentNote: "Use parent note as project:",
 				noDefaultProjects: "No default projects selected",
-				autosuggestFilters: "Autosuggest Filters",
-				customizeDisplay: "Customize Display",
-				filtersOn: "Filters On",
+				autosuggestFilters: "Autosuggest filters",
+				customizeDisplay: "Customize display",
+				filtersOn: "Filters on",
 			},
 			titleCard: {
 				storeTitleInFilename: "Store title in filename:",
 				storedInFilename: "Stored in filename",
-				filenameUpdatesWithTitle: "Filename will automatically update when the task title changes.",
+				filenameUpdatesWithTitle:
+					"Filename will automatically update when the task title changes.",
 				filenameFormat: "Filename format:",
 				customTemplate: "Custom template:",
-				legacySyntaxWarning: "Single-brace syntax like {title} is deprecated. Please use double-brace syntax {{title}} instead for consistency with body templates.",
+				legacySyntaxWarning:
+					"Single-brace syntax like {title} is deprecated. Please use double-brace syntax {{title}} instead for consistency with body templates.",
 			},
 			tagsCard: {
 				nativeObsidianTags: "Uses native Obsidian tags",
 			},
 			remindersCard: {
-				defaultReminders: "Default Reminders",
+				defaultReminders: "Default reminders",
 			},
 			taskStatuses: {
-				header: "Task Statuses",
+				header: "Task statuses",
 				description:
 					"Customize the status options available for your tasks. These statuses control the task lifecycle and determine when tasks are considered complete.",
 				howTheyWork: {
@@ -1087,21 +1135,22 @@ export const en: TranslationTree = {
 					buttonText: "Add status",
 				},
 				validationNote:
-					'Note: You must have at least 2 statuses, and at least one status must be marked as "Completed".',
+					'Note: You must have at least 2 statuses, and at least one status must be marked as "completed".',
 				emptyState: "No custom statuses configured. Add a status to get started.",
-				emptyStateButton: "Add Status",
+				emptyStateButton: "Add status",
 				fields: {
 					value: "Value:",
 					label: "Label:",
 					color: "Color:",
 					icon: "Icon:",
 					completed: "Completed:",
+					excludeFromCycle: "Skip when cycling:",
 					autoArchive: "Auto-archive:",
 					delayMinutes: "Delay (minutes):",
 				},
 				placeholders: {
 					value: "in-progress",
-					label: "In Progress",
+					label: "In progress",
 					icon: "check, circle, clock",
 				},
 				badges: {
@@ -1110,15 +1159,15 @@ export const en: TranslationTree = {
 				deleteConfirm: 'Are you sure you want to delete the status "{label}"?',
 			},
 			taskPriorities: {
-				header: "Task Priorities",
+				header: "Task priorities",
 				description:
 					"Customize the priority levels available for your tasks. In v4.0+, priorities are sorted alphabetically by their value in Bases views.",
 				howTheyWork: {
 					title: "How priorities work:",
-					value:
-						'Value: The internal identifier stored in your task files. Use prefixes like "1-urgent", "2-high" to control sort order in Bases views.',
+					value: 'Value: The internal identifier stored in your task files. Use prefixes like "1-urgent", "2-high" to control sort order in Bases views.',
 					label: 'Display Label: The display name shown in the interface (e.g., "High Priority")',
 					color: "Color: Visual indicator color for the priority dot and badges",
+					icon: "Icon: optional icon to show on task cards instead of the priority dot",
 				},
 				addNew: {
 					name: "Add new priority",
@@ -1128,21 +1177,23 @@ export const en: TranslationTree = {
 				validationNote:
 					"Note: You must have at least 1 priority. Priorities are sorted alphabetically by value in Bases views.",
 				emptyState: "No custom priorities configured. Add a priority to get started.",
-				emptyStateButton: "Add Priority",
+				emptyStateButton: "Add priority",
 				fields: {
 					value: "Value:",
 					label: "Label:",
 					color: "Color:",
+					icon: "Icon:",
 				},
 				placeholders: {
 					value: "high",
-					label: "High Priority",
+					label: "High priority",
+					icon: "alert-circle",
 				},
 				deleteConfirm: "You must have at least one priority",
 				deleteTooltip: "Delete priority",
 			},
 			fieldMapping: {
-				header: "Field Mapping",
+				header: "Field mapping",
 				warning:
 					"⚠️ Warning: TaskNotes will read AND write using these property names. Changing these after creating tasks may cause inconsistencies.",
 				description:
@@ -1150,7 +1201,7 @@ export const en: TranslationTree = {
 				resetButton: {
 					name: "Reset field mappings",
 					description: "Reset all field mappings to default values",
-					buttonText: "Reset to Defaults",
+					buttonText: "Reset to defaults",
 				},
 				notices: {
 					resetSuccess: "Field mappings reset to defaults",
@@ -1180,15 +1231,15 @@ export const en: TranslationTree = {
 					blockedBy: "Blocked by",
 					sortOrder: "Manual order",
 					pomodoros: "Pomodoros",
-					icsEventId: "ICS Event ID",
-					icsEventTag: "ICS Event Tag",
+					icsEventId: "ICS event ID",
+					icsEventTag: "ICS event tag",
 					reminders: "Reminders",
 				},
 			},
 			customUserFields: {
-				header: "Custom User Fields",
+				header: "Custom user fields",
 				description:
-					"Define custom frontmatter properties to appear as type-aware filter options across views. Each row: Display Name, Property Name, Type.",
+					"Define custom frontmatter properties to appear as type-aware filter options across views. Each row: Display name, property name, type.",
 				addNew: {
 					name: "Add new user field",
 					description: "Create a new custom field that will appear in filters and views",
@@ -1196,15 +1247,15 @@ export const en: TranslationTree = {
 				},
 				emptyState:
 					"No custom user fields configured. Add a field to create custom properties for your tasks.",
-				emptyStateButton: "Add User Field",
+				emptyStateButton: "Add user field",
 				fields: {
-					displayName: "Display Name:",
-					propertyKey: "Property Key:",
+					displayName: "Display name:",
+					propertyKey: "Property key:",
 					type: "Type:",
-					defaultValue: "Default Value:",
+					defaultValue: "Default value:",
 				},
 				placeholders: {
-					displayName: "Display Name",
+					displayName: "Display name",
 					propertyKey: "property-name",
 					defaultValue: "Default value",
 					defaultValueList: "Default values (comma-separated)",
@@ -1217,12 +1268,12 @@ export const en: TranslationTree = {
 					list: "List",
 				},
 				defaultNames: {
-					unnamedField: "Unnamed Field",
+					unnamedField: "Unnamed field",
 					noKey: "no-key",
 				},
 				deleteTooltip: "Delete field",
 				autosuggestFilters: {
-					header: "Autosuggestion filters (Advanced)",
+					header: "Autosuggestion filters (advanced)",
 					description:
 						"Filter which files appear in autocomplete suggestions for this field",
 				},
@@ -1230,29 +1281,29 @@ export const en: TranslationTree = {
 		},
 		appearance: {
 			taskCards: {
-				header: "Task Cards",
+				header: "Task cards",
 				description: "Configure how task cards are displayed across all views.",
 				defaultVisibleProperties: {
 					name: "Default visible properties",
 					description: "Choose which properties appear on task cards by default.",
 				},
 				propertyGroups: {
-					coreProperties: "CORE PROPERTIES",
+					coreProperties: "Core properties",
 					organization: "ORGANIZATION",
-					customProperties: "CUSTOM PROPERTIES",
+					customProperties: "Custom properties",
 				},
 				properties: {
-					status: "Status Dot",
-					priority: "Priority Dot",
-					due: "Due Date",
-					scheduled: "Scheduled Date",
-					timeEstimate: "Time Estimate",
-					totalTrackedTime: "Total Tracked Time",
-					checklistProgress: "Checklist Progress",
+					status: "Status dot",
+					priority: "Priority dot",
+					due: "Due date",
+					scheduled: "Scheduled date",
+					timeEstimate: "Time estimate",
+					totalTrackedTime: "Total tracked time",
+					checklistProgress: "Checklist progress",
 					recurrence: "Recurrence",
-					completedDate: "Completed Date",
-					createdDate: "Created Date",
-					modifiedDate: "Modified Date",
+					completedDate: "Completed date",
+					createdDate: "Created date",
+					modifiedDate: "Modified date",
 					projects: "Projects",
 					contexts: "Contexts",
 					tags: "Tags",
@@ -1261,18 +1312,18 @@ export const en: TranslationTree = {
 				},
 			},
 			taskFilenames: {
-				header: "Task Filenames",
+				header: "Task filenames",
 				description: "Configure how task files are named when created.",
 				storeTitleInFilename: {
 					name: "Store title in filename",
 					description:
-						"Use the task title as the filename. Filename will update when the task title is changed (Recommended).",
+						"Use the task title as the filename. Filename will update when the task title is changed (recommended).",
 				},
 				filenameFormat: {
 					name: "Filename format",
 					description: "How task filenames should be generated",
 					options: {
-						title: "Task title (Non-updating)",
+						title: "Task title (non-updating)",
 						zettel: "Zettelkasten format (YYMMDD + base36 seconds since midnight)",
 						timestamp: "Full timestamp (YYYY-MM-DD-HHMMSS)",
 						custom: "Custom template",
@@ -1288,7 +1339,7 @@ export const en: TranslationTree = {
 				},
 			},
 			displayFormatting: {
-				header: "Display Formatting",
+				header: "Display formatting",
 				description:
 					"Configure how dates, times, and other data are displayed across the plugin.",
 				timeFormat: {
@@ -1301,17 +1352,17 @@ export const en: TranslationTree = {
 				},
 			},
 			calendarView: {
-				header: "Calendar View",
+				header: "Calendar view",
 				description: "Customize the appearance and behavior of the calendar view.",
 				defaultView: {
 					name: "Default view",
 					description: "The calendar view shown when opening the calendar tab",
 					options: {
-						monthGrid: "Month Grid",
-						weekTimeline: "Week Timeline",
-						dayTimeline: "Day Timeline",
-						yearView: "Year View",
-						customMultiDay: "Custom Multi-Day",
+						monthGrid: "Month grid",
+						weekTimeline: "Week timeline",
+						dayTimeline: "Day timeline",
+						yearView: "Year view",
+						customMultiDay: "Custom multi-day",
 					},
 				},
 				customDayCount: {
@@ -1348,13 +1399,14 @@ export const en: TranslationTree = {
 					description:
 						'Calendar locale for date formatting and calendar system (e.g., "en", "fa" for Farsi/Persian, "de" for German). Leave empty to auto-detect from browser.',
 					placeholder: "Auto-detect",
-					invalidLocale: "Invalid locale. Please enter a valid language tag (e.g., 'en', 'de', 'fr-FR').",
+					invalidLocale:
+						"Invalid locale. Please enter a valid language tag (e.g., 'en', 'de', 'fr-FR').",
 				},
 			},
 			defaultEventVisibility: {
-				header: "Default Event Visibility",
+				header: "Default event visibility",
 				description:
-					"Configure which event types are visible by default when opening the Calendar. Users can still toggle these on/off in the calendar view.",
+					"Configure which event types are visible by default when opening the calendar. Users can still toggle these on/off in the calendar view.",
 				showScheduledTasks: {
 					name: "Show scheduled tasks",
 					description: "Display tasks with scheduled dates by default",
@@ -1382,7 +1434,7 @@ export const en: TranslationTree = {
 				},
 			},
 			timeSettings: {
-				header: "Time Settings",
+				header: "Time settings",
 				description: "Configure time-related display settings for timeline views.",
 				timeSlotDuration: {
 					name: "Time slot duration",
@@ -1400,8 +1452,9 @@ export const en: TranslationTree = {
 				},
 				endTime: {
 					name: "End time",
-					description: "Latest time shown in timeline views (HH:MM format)",
-					placeholder: "22:00",
+					description:
+						"Latest time shown in timeline views (HH:MM format). Use values above 24:00 to show early next-day hours, such as 26:00 for 2 AM.",
+					placeholder: "26:00",
 				},
 				initialScrollTime: {
 					name: "Initial scroll time",
@@ -1415,7 +1468,7 @@ export const en: TranslationTree = {
 				},
 			},
 			uiElements: {
-				header: "UI Elements",
+				header: "UI elements",
 				description: "Configure the display of various UI elements.",
 				showTrackedTasksInStatusBar: {
 					name: "Show tracked tasks in status bar",
@@ -1423,7 +1476,8 @@ export const en: TranslationTree = {
 				},
 				showRelationshipsWidget: {
 					name: "Show relationships widget",
-					description: "Display a widget showing all relationships for the current note (subtasks, projects, dependencies)",
+					description:
+						"Display a widget showing all relationships for the current note (subtasks, projects, dependencies)",
 				},
 				relationshipsPosition: {
 					name: "Relationships position",
@@ -1460,7 +1514,7 @@ export const en: TranslationTree = {
 				},
 			},
 			projectAutosuggest: {
-				header: "Project Autosuggest",
+				header: "Project autosuggest",
 				description: "Customize how project suggestions display during task creation.",
 				requiredTags: {
 					name: "Required tags",
@@ -1519,7 +1573,7 @@ export const en: TranslationTree = {
 					},
 				},
 				quickReference: {
-					header: "Quick Reference",
+					header: "Quick reference",
 					properties:
 						"Available properties: title, aliases, file.path, file.parent, or any frontmatter field",
 					labels: 'Add labels: {title|n(Title)} → "Title: My Project"',
@@ -1530,10 +1584,10 @@ export const en: TranslationTree = {
 				},
 			},
 			dataStorage: {
-				name: "Storage Location",
+				name: "Storage location",
 				description: "Where to store Pomodoro session history",
 				pluginData: "Plugin data (recommended)",
-				dailyNotes: "Daily Notes",
+				dailyNotes: "Daily notes",
 				notices: {
 					locationChanged: "Pomodoro storage location changed to {location}",
 				},
@@ -1563,16 +1617,21 @@ export const en: TranslationTree = {
 				},
 				viewCommands: {
 					header: "Views & base files",
-					description: "TaskNotes uses Obsidian Bases files (.base) to power its views. These files are generated automatically on startup if they don't exist, configured with your current settings (task identification, field mappings, statuses, etc.).",
-					descriptionRegen: "Base files are not automatically updated when you change settings. To apply new settings, delete the existing .base files and restart Obsidian, or use \"Create files\" below, or edit them manually.",
+					description:
+						"TaskNotes uses Obsidian Bases files (.base) to power its views. These files are generated automatically on startup if they don't exist, configured with your current settings (task identification, field mappings, statuses, etc.).",
+					descriptionRegen:
+						'Base files are not automatically updated when you change settings. To apply new settings, use "Update files" below, delete the existing .base files and restart Obsidian, or edit them manually.',
+					pomodoroDailyNotesHint:
+						"The generated Pomodoro statistics base reads Pomodoro history from daily notes; if your history is still stored in plugin data, migrate it in settings before using that base file.",
 					docsLink: "View documentation for available formulas and customization options",
 					docsLinkUrl: "https://tasknotes.dev/views/default-base-templates",
 					commands: {
 						miniCalendar: "Open mini calendar view",
-						kanban: "Open kanban view",
+						kanban: "Open Kanban view",
 						tasks: "Open tasks view",
 						advancedCalendar: "Open advanced calendar view",
 						agenda: "Open agenda view",
+						pomodoroStats: "Pomodoro statistics base",
 						relationships: "Relationships widget",
 					},
 					fileLabel: "File: {path}",
@@ -1581,17 +1640,30 @@ export const en: TranslationTree = {
 				},
 				autoCreateDefaultFiles: {
 					name: "Auto-create default files",
-					description: "Automatically create missing default Base view files on startup. Disable to prevent deleted sample files from being recreated.",
+					description:
+						"Automatically create missing default base view files on startup. Disable to prevent deleted sample files from being recreated.",
 				},
 				createDefaultFiles: {
 					name: "Create default files",
-					description: "Create the default .base files in TaskNotes/Views/ directory. Existing files will not be overwritten.",
+					description:
+						"Create the default .base files in TaskNotes/Views/ directory. Existing files will not be overwritten.",
 					buttonText: "Create files",
 				},
+				updateDefaultFiles: {
+					name: "Update default files",
+					description:
+						"Overwrite the configured default .base files with templates generated from your current TaskNotes settings.",
+					buttonText: "Update files",
+					confirmTitle: "Update default base files",
+					confirmMessage:
+						"This will overwrite the configured default .base files with freshly generated templates. Any manual edits in those files will be replaced.",
+					confirmText: "Update files",
+				},
 				exportV3Views: {
-					name: "Export V3 saved views to Bases",
-					description: "Convert all your saved views from TaskNotes v3 into a single .base file with multiple views. This helps migrate your v3 filter configurations to the new Bases system.",
-					buttonText: "Export V3 views",
+					name: "Export v3 saved views to Bases",
+					description:
+						"Convert all your saved views from TaskNotes v3 into a single .base file with multiple views. This helps migrate your v3 filter configurations to the new Bases system.",
+					buttonText: "Export v3 views",
 					noViews: "No saved views to export",
 					fileExists: "File already exists",
 					confirmOverwrite: 'A file named "{fileName}" already exists. Overwrite it?',
@@ -1636,22 +1708,23 @@ export const en: TranslationTree = {
 				},
 				useICSEndAsDue: {
 					name: "Use ICS event end time as task due date",
-					description: "When enabled, tasks created from calendar events will have their due date set to the event's end time. For all-day events, the due date will be set to the event date. For timed events, the due date will include the end time.",
+					description:
+						"When enabled, tasks created from calendar events will have their due date set to the event's end time. For all-day events, the due date will be set to the event date. For timed events, the due date will include the end time.",
 				},
 			},
 			subscriptionsList: {
 				header: "Calendar subscriptions list",
 				addSubscription: {
-					name: "Add Calendar Subscription",
+					name: "Add calendar subscription",
 					description: "Add a new calendar subscription from ICS/iCal URL or local file",
-					buttonText: "Add Subscription",
+					buttonText: "Add subscription",
 				},
 				refreshAll: {
 					name: "Refresh all subscriptions",
 					description: "Manually refresh all enabled calendar subscriptions",
-					buttonText: "Refresh All",
+					buttonText: "Refresh all",
 				},
-				newCalendarName: "New Calendar",
+				newCalendarName: "New calendar",
 				emptyState:
 					"No calendar subscriptions configured. Add a subscription to sync external calendars.",
 				notices: {
@@ -1672,13 +1745,13 @@ export const en: TranslationTree = {
 					name: "Name:",
 					type: "Type:",
 					url: "URL:",
-					filePath: "File Path:",
+					filePath: "File path:",
 					color: "Color:",
 					refreshMinutes: "Refresh (min):",
 				},
 				typeOptions: {
 					remote: "Remote URL",
-					local: "Local File",
+					local: "Local file",
 				},
 				placeholders: {
 					calendarName: "Calendar name",
@@ -1690,19 +1763,19 @@ export const en: TranslationTree = {
 					enabled: "Enabled",
 					disabled: "Disabled",
 					remote: "Remote",
-					localFile: "Local File",
-					remoteCalendar: "Remote Calendar",
-					localFileCalendar: "Local File",
+					localFile: "Local file",
+					remoteCalendar: "Remote calendar",
+					localFileCalendar: "Local file",
 					synced: "Synced {timeAgo}",
 					error: "Error",
 				},
 				actions: {
-					refreshNow: "Refresh Now",
+					refreshNow: "Refresh now",
 					deleteSubscription: "Delete subscription",
 				},
-				refreshNow: "Refresh Now",
+				refreshNow: "Refresh now",
 				confirmDelete: {
-					title: "Delete Subscription",
+					title: "Delete subscription",
 					message:
 						'Are you sure you want to delete the subscription "{name}"? This action cannot be undone.',
 					confirmText: "Delete",
@@ -1730,13 +1803,18 @@ export const en: TranslationTree = {
 					description:
 						"When enabled, uses the task's time estimate (duration) instead of due date for the calendar event end time. This is useful for GTD workflows where scheduled + duration represents work planning, while due date represents deadlines.",
 				},
+				excludeCompleted: {
+					name: "Exclude completed tasks",
+					description:
+						"When enabled, completed tasks are omitted from ICS exports. Completed statuses are taken from your task statuses settings.",
+				},
 				exportNow: {
 					name: "Export now",
 					description: "Manually trigger an immediate export",
-					buttonText: "Export Now",
+					buttonText: "Export now",
 				},
 				status: {
-					title: "Export Status:",
+					title: "Export status:",
 					lastExport: "Last export: {time}",
 					nextExport: "Next export: {time}",
 					noExports: "No exports yet",
@@ -1753,108 +1831,103 @@ export const en: TranslationTree = {
 				},
 			},
 			googleCalendarExport: {
-				header: "Export Tasks to Google Calendar",
+				header: "Export tasks to Google Calendar",
 				description:
 					"Automatically sync your tasks to Google Calendar as events. Requires Google Calendar to be connected above.",
 				enable: {
-					name: "Enable Task Export",
+					name: "Enable task export",
 					description:
 						"When enabled, tasks with dates will be automatically synced to Google Calendar as events.",
 				},
 				targetCalendar: {
-					name: "Target Calendar",
+					name: "Target calendar",
 					description: "Select which calendar to create task events in.",
 					placeholder: "Select a calendar...",
 					connectFirst: "Connect Google Calendar first",
 					primarySuffix: " (Primary)",
 				},
 				syncTrigger: {
-					name: "Sync Trigger",
+					name: "Sync trigger",
 					description: "Which task date should trigger calendar event creation.",
 					options: {
-						scheduled: "Scheduled Date",
-						due: "Due Date",
+						scheduled: "Scheduled date",
+						due: "Due date",
 						both: "Both (prefer scheduled)",
 					},
 				},
 				allDayEvents: {
-					name: "Create as All-Day Events",
+					name: "Create as all-day events",
 					description:
 						"When enabled, tasks are created as all-day events. When disabled, uses time estimate for duration.",
 				},
 				defaultDuration: {
-					name: "Default Event Duration",
+					name: "Default event duration",
 					description:
 						"Duration in minutes for timed events (used when task has no time estimate).",
 				},
 				eventTitleTemplate: {
-					name: "Event Title Template",
+					name: "Event title template",
 					description:
 						"Template for event titles. Available variables: {{title}}, {{status}}, {{priority}}",
 					placeholder: "{{title}}",
 				},
 				includeDescription: {
-					name: "Include Task Details in Description",
+					name: "Include task details in description",
 					description:
 						"Add task metadata (priority, status, tags, etc.) to the event description.",
 				},
 				includeObsidianLink: {
-					name: "Include Obsidian Link",
+					name: "Include Obsidian link",
 					description:
 						"Add a link back to the task in Obsidian in the event description.",
 				},
 				defaultReminder: {
-					name: "Default Reminder",
+					name: "Default reminder",
 					description:
-						"Add a popup reminder to Google Calendar events. Set minutes before event (0 = no reminder). Common values: 15, 30, 60, 1440 (1 day).",
+						"Add popup reminders to timed Google Calendar events. Enter minutes before the event, separated by commas. Leave empty to use calendar defaults. Common values: 15, 30, 60, 1440.",
 				},
 				automaticSyncBehavior: {
-					header: "Automatic Sync Behavior",
+					header: "Automatic sync behavior",
 				},
 				syncOnCreate: {
-					name: "Sync on Task Create",
-					description:
-						"Automatically create calendar event when a new task is created.",
+					name: "Sync on task create",
+					description: "Automatically create calendar event when a new task is created.",
 				},
 				syncOnUpdate: {
-					name: "Sync on Task Update",
-					description:
-						"Automatically update calendar event when a task is modified.",
+					name: "Sync on task update",
+					description: "Automatically update calendar event when a task is modified.",
 				},
 				syncOnComplete: {
-					name: "Sync on Task Complete",
+					name: "Sync on task complete",
 					description:
 						"Update calendar event when a task is completed (adds checkmark to title).",
 				},
 				syncOnDelete: {
-					name: "Delete Event on Task Delete",
-					description:
-						"Remove calendar event when the corresponding task is deleted.",
+					name: "Delete event on task delete",
+					description: "Remove calendar event when the corresponding task is deleted.",
 				},
 				manualSyncActions: {
-					header: "Manual Sync Actions",
+					header: "Manual sync actions",
 				},
 				syncAllTasks: {
-					name: "Sync All Tasks",
+					name: "Sync all tasks",
 					description:
 						"Sync all existing tasks to Google Calendar. This will create events for tasks that haven't been synced yet.",
-					buttonText: "Sync All",
+					buttonText: "Sync all",
 				},
 				unlinkAllTasks: {
-					name: "Unlink All Tasks",
-					description:
-						"Remove all task-event links without deleting calendar events.",
-					buttonText: "Unlink All",
-					confirmTitle: "Unlink All Tasks",
+					name: "Unlink all tasks",
+					description: "Remove all task-event links without deleting calendar events.",
+					buttonText: "Unlink all",
+					confirmTitle: "Unlink all tasks",
 					confirmMessage:
 						"This will remove all links between tasks and calendar events. The calendar events will remain but will no longer be updated when tasks change. Are you sure?",
-					confirmButtonText: "Unlink All",
+					confirmButtonText: "Unlink all",
 				},
 				notices: {
 					notEnabled:
 						"Google Calendar export is not enabled. Configure it in Settings > Integrations.",
-					notEnabledOrConfigured:
-						"Google Calendar export is not enabled or configured",
+					notEnabledOrConfigured: "Google Calendar export is not enabled or configured",
 					serviceNotAvailable: "Task calendar sync service not available",
 					syncResults: "Synced: {synced}, Failed: {failed}, Skipped: {skipped}",
 					taskSynced: "Task synced to Google Calendar",
@@ -1871,7 +1944,7 @@ export const en: TranslationTree = {
 					tasksUnlinked: "All task links removed",
 				},
 				eventDescription: {
-					untitledTask: "Untitled Task",
+					untitledTask: "Untitled task",
 					priority: "Priority: {value}",
 					status: "Status: {value}",
 					due: "Due: {value}",
@@ -1902,12 +1975,13 @@ export const en: TranslationTree = {
 				},
 				mcp: {
 					enable: {
-						name: "Enable MCP Server",
-						description: "Expose TaskNotes tools via Model Context Protocol at /mcp endpoint. Requires HTTP API to be enabled.",
+						name: "Enable MCP server",
+						description:
+							"Expose TaskNotes tools via Model Context Protocol at /mcp endpoint. Requires HTTP API to be enabled.",
 					},
 				},
 				endpoints: {
-					header: "Available API Endpoints",
+					header: "Available API endpoints",
 					expandIcon: "▶",
 					collapseIcon: "▼",
 				},
@@ -1920,14 +1994,14 @@ export const en: TranslationTree = {
 					usage: "Configure webhooks to integrate with automation tools, sync services, or custom applications.",
 				},
 				addWebhook: {
-					name: "Add Webhook",
+					name: "Add webhook",
 					description: "Register a new webhook endpoint",
-					buttonText: "Add Webhook",
+					buttonText: "Add webhook",
 				},
 				emptyState: {
 					message:
 						"No webhooks configured. Add a webhook to receive real-time notifications.",
-					buttonText: "Add Webhook",
+					buttonText: "Add webhook",
 				},
 				labels: {
 					active: "Active:",
@@ -1946,10 +2020,10 @@ export const en: TranslationTree = {
 					created: "Created {timeAgo}",
 				},
 				actions: {
-					editEvents: "Edit Events",
+					editEvents: "Edit events",
 					delete: "Delete",
 				},
-				editEvents: "Edit Events",
+				editEvents: "Edit events",
 				notices: {
 					urlUpdated: "Webhook URL updated",
 					enabled: "Webhook enabled",
@@ -1959,7 +2033,7 @@ export const en: TranslationTree = {
 					updated: "Webhook updated",
 				},
 				confirmDelete: {
-					title: "Delete Webhook",
+					title: "Delete webhook",
 					message:
 						"Are you sure you want to delete this webhook?\n\nURL: {url}\n\nThis action cannot be undone.",
 					confirmText: "Delete",
@@ -1978,88 +2052,88 @@ export const en: TranslationTree = {
 					noTransform: "Raw payload (no transform)",
 				},
 				secretModal: {
-					title: "Webhook Secret Generated",
+					title: "Webhook secret generated",
 					description:
 						"Your webhook secret has been generated. Save this secret as you won't be able to view it again:",
 					usage: "Use this secret to verify webhook payloads in your receiving application.",
 					gotIt: "Got it",
 				},
 				editModal: {
-					title: "Edit Webhook",
+					title: "Edit webhook",
 					eventsHeader: "Events to subscribe to",
 				},
 				events: {
 					taskCreated: {
-						label: "Task Created",
+						label: "Task created",
 						description: "When new tasks are created",
 					},
 					taskUpdated: {
-						label: "Task Updated",
+						label: "Task updated",
 						description: "When tasks are modified",
 					},
 					taskCompleted: {
-						label: "Task Completed",
+						label: "Task completed",
 						description: "When tasks are marked complete",
 					},
 					taskDeleted: {
-						label: "Task Deleted",
+						label: "Task deleted",
 						description: "When tasks are deleted",
 					},
 					taskArchived: {
-						label: "Task Archived",
+						label: "Task archived",
 						description: "When tasks are archived",
 					},
 					taskUnarchived: {
-						label: "Task Unarchived",
+						label: "Task unarchived",
 						description: "When tasks are unarchived",
 					},
 					timeStarted: {
-						label: "Time Started",
+						label: "Time started",
 						description: "When time tracking starts",
 					},
 					timeStopped: {
-						label: "Time Stopped",
+						label: "Time stopped",
 						description: "When time tracking stops",
 					},
 					pomodoroStarted: {
-						label: "Pomodoro Started",
-						description: "When pomodoro sessions begin",
+						label: "Pomodoro started",
+						description: "When Pomodoro sessions begin",
 					},
 					pomodoroCompleted: {
-						label: "Pomodoro Completed",
-						description: "When pomodoro sessions finish",
+						label: "Pomodoro completed",
+						description: "When Pomodoro sessions finish",
 					},
 					pomodoroInterrupted: {
-						label: "Pomodoro Interrupted",
-						description: "When pomodoro sessions are stopped",
+						label: "Pomodoro interrupted",
+						description: "When Pomodoro sessions are stopped",
 					},
 					recurringCompleted: {
-						label: "Recurring Instance Completed",
+						label: "Recurring instance completed",
 						description: "When recurring task instances complete",
 					},
 					reminderTriggered: {
-						label: "Reminder Triggered",
+						label: "Reminder triggered",
 						description: "When task reminders activate",
 					},
 				},
 				modals: {
 					secretGenerated: {
-						title: "Webhook Secret Generated",
+						title: "Webhook secret generated",
 						description:
 							"Your webhook secret has been generated. Save this secret as you won't be able to view it again:",
 						usage: "Use this secret to verify webhook payloads in your receiving application.",
 						buttonText: "Got it",
 					},
 					edit: {
-						title: "Edit Webhook",
+						title: "Edit webhook",
 						eventsSection: "Events to subscribe to",
-						transformSection: "Transform Configuration (Optional)",
-						headersSection: "Headers Configuration",
+						transformSection: "Transform configuration (optional)",
+						headersSection: "Headers configuration",
 						transformFile: {
-							name: "Transform File",
+							name: "Transform file",
 							description:
-								"Path to a .js or .json file in your vault that transforms webhook payloads",
-							placeholder: "discord-transform.js",
+								"Path to a .json template file in your vault that transforms webhook payloads",
+							placeholder: "simple-template.json",
 						},
 						customHeaders: {
 							name: "Include custom headers",
@@ -2068,27 +2142,27 @@ export const en: TranslationTree = {
 						},
 						buttons: {
 							cancel: "Cancel",
-							save: "Save Changes",
+							save: "Save changes",
 						},
 						notices: {
 							selectAtLeastOneEvent: "Please select at least one event",
 						},
 					},
 					add: {
-						title: "Add Webhook",
+						title: "Add webhook",
 						eventsSection: "Events to subscribe to",
-						transformSection: "Transform Configuration (Optional)",
-						headersSection: "Headers Configuration",
+						transformSection: "Transform configuration (optional)",
+						headersSection: "Headers configuration",
 						url: {
 							name: "Webhook URL",
 							description: "The endpoint where webhook payloads will be sent",
 							placeholder: "https://your-service.com/webhook",
 						},
 						transformFile: {
-							name: "Transform File",
+							name: "Transform file",
 							description:
-								"Path to a .js or .json file in your vault that transforms webhook payloads",
-							placeholder: "discord-transform.js",
+								"Path to a .json template file in your vault that transforms webhook payloads",
+							placeholder: "simple-template.json",
 						},
 						customHeaders: {
 							name: "Include custom headers",
@@ -2096,20 +2170,20 @@ export const en: TranslationTree = {
 								"Include TaskNotes headers (event type, signature, delivery ID). Turn off for Discord, Slack, and other services with strict CORS policies.",
 						},
 						transformHelp: {
-							title: "Transform files allow you to customize webhook payloads:",
-							jsFiles: ".js files:",
-							jsDescription: " Custom JavaScript transforms",
+							title: "JSON transform templates customize webhook payloads:",
+							jsFiles: "",
+							jsDescription: "",
 							jsonFiles: ".json files:",
 							jsonDescription: " Templates with ",
 							jsonVariable: "${data.task.title}",
 							leaveEmpty: "Leave empty:",
 							leaveEmptyDescription: " Send raw data",
 							example: "Example:",
-							exampleFile: "discord-transform.js",
+							exampleFile: "simple-template.json",
 						},
 						buttons: {
 							cancel: "Cancel",
-							add: "Add Webhook",
+							add: "Add webhook",
 						},
 						notices: {
 							urlRequired: "Webhook URL is required",
@@ -2127,7 +2201,8 @@ export const en: TranslationTree = {
 				learnMore: "Learn more about mdbase-spec",
 				enable: {
 					name: "Generate mdbase type definitions",
-					description: "Generate and maintain mdbase type files (mdbase.yaml and _types/task.md) at the vault root as your settings change.",
+					description:
+						"Generate and maintain mdbase type files (mdbase.yaml and _types/task.md) at the vault root as your settings change.",
 				},
 			},
 			timeFormats: {
@@ -2145,7 +2220,7 @@ export const en: TranslationTree = {
 		icsNoteCreatedSuccess: "Note created successfully",
 		icsCreationModalOpenFailed: "Failed to open creation modal",
 		icsNoteLinkSuccess: 'Linked note "{fileName}" to ICS event',
-		icsTaskCreatedSuccess: 'Task created: {title}',
+		icsTaskCreatedSuccess: "Task created: {title}",
 		icsRelatedItemsRefreshed: "Related notes refreshed",
 		icsFileNotFound: "File not found or invalid",
 		icsFileOpenFailed: "Failed to open file",
@@ -2172,9 +2247,9 @@ export const en: TranslationTree = {
 		openTasksView: "Open tasks view",
 		openNotesView: "Open notes view",
 		openAgendaView: "Open agenda view",
-		openPomodoroView: "Open pomodoro timer",
-		openKanbanView: "Open kanban board",
-		openPomodoroStats: "Open pomodoro statistics",
+		openPomodoroView: "Open Pomodoro timer",
+		openKanbanView: "Open Kanban board",
+		openPomodoroStats: "Open Pomodoro statistics",
 		openStatisticsView: "Open task & project statistics",
 		createNewTask: "Create new task",
 		convertCurrentNoteToTask: {
@@ -2188,10 +2263,13 @@ export const en: TranslationTree = {
 		insertTaskNoteLink: "Insert tasknote link",
 		createInlineTask: "Create new inline task",
 		quickActionsCurrentTask: "Quick actions for current task",
+		editCurrentTask: "Edit current task",
+		addProjectToCurrentTask: "Add project to current task",
+		addSubtaskToCurrentNote: "Add subtask to current note",
 		goToTodayNote: "Go to today's note",
-		startPomodoro: "Start pomodoro timer",
-		stopPomodoro: "Stop pomodoro timer",
-		pauseResumePomodoro: "Pause/resume pomodoro timer",
+		startPomodoro: "Start Pomodoro timer",
+		stopPomodoro: "Stop Pomodoro timer",
+		pauseResumePomodoro: "Pause/resume Pomodoro timer",
 		refreshCache: "Refresh cache",
 		exportAllTasksIcs: "Export all tasks as ICS file",
 		syncAllTasksGoogleCalendar: "Sync all tasks to Google Calendar",
@@ -2200,10 +2278,11 @@ export const en: TranslationTree = {
 		startTimeTrackingWithSelector: "Start time tracking (select task)",
 		editTimeEntries: "Edit time entries (select task)",
 		createOrOpenTask: "Create or open task",
+		rolloverOverdueScheduledTasks: "Postpone overdue scheduled tasks to today",
 	},
 	modals: {
 		deviceCode: {
-			title: "Google Calendar Authorization",
+			title: "Google Calendar authorization",
 			instructions: {
 				intro: "To connect your Google Calendar, please follow these steps:",
 			},
@@ -2214,35 +2293,35 @@ export const en: TranslationTree = {
 				signIn: "Sign in with your Google account and grant access",
 				returnToObsidian: "Return to Obsidian (this window will close automatically)",
 			},
-			codeLabel: "Your Code:",
+			codeLabel: "Your code:",
 			copyCodeAriaLabel: "Copy code",
 			waitingForAuthorization: "Waiting for authorization...",
-			openBrowserButton: "Open Browser",
+			openBrowserButton: "Open browser",
 			cancelButton: "Cancel",
 			expiresMinutesSeconds: "Code expires in {minutes}m {seconds}s",
 			expiresSeconds: "Code expires in {seconds}s",
 		},
 		icsEventInfo: {
-			calendarEventHeading: "Calendar Event",
+			calendarEventHeading: "Calendar event",
 			titleLabel: "Title",
 			calendarLabel: "Calendar",
-			dateTimeLabel: "Date & Time",
+			dateTimeLabel: "Date & time",
 			locationLabel: "Location",
 			descriptionLabel: "Description",
 			urlLabel: "URL",
-			relatedNotesHeading: "Related Notes & Tasks",
+			relatedNotesHeading: "Related notes & tasks",
 			noRelatedItems: "No related notes or tasks found for this event.",
 			typeTask: "Task",
 			typeNote: "Note",
 			actionsHeading: "Actions",
-			createFromEventLabel: "Create from Event",
+			createFromEventLabel: "Create from event",
 			createFromEventDesc: "Create a new note or task from this calendar event",
-			linkExistingLabel: "Link Existing",
+			linkExistingLabel: "Link existing",
 			linkExistingDesc: "Link an existing note to this calendar event",
 		},
 		timeblockInfo: {
-			editHeading: "Edit Timeblock",
-			dateTimeLabel: "Date & Time: ",
+			editHeading: "Edit timeblock",
+			dateTimeLabel: "Date & time: ",
 			titleLabel: "Title",
 			titleDesc: "Title for your timeblock",
 			titlePlaceholder: "e.g., Deep work session",
@@ -2254,11 +2333,11 @@ export const en: TranslationTree = {
 			colorPlaceholder: "#3b82f6",
 			attachmentsLabel: "Attachments",
 			attachmentsDesc: "Files or notes linked to this timeblock",
-			addAttachmentButton: "Add Attachment",
+			addAttachmentButton: "Add attachment",
 			addAttachmentTooltip: "Select a file or note using fuzzy search",
-			deleteButton: "Delete Timeblock",
-			saveButton: "Save Changes",
-			deleteConfirmationTitle: "Delete Timeblock",
+			deleteButton: "Delete timeblock",
+			saveButton: "Save changes",
+			deleteConfirmationTitle: "Delete timeblock",
 		},
 		timeblockCreation: {
 			heading: "Create timeblock",
@@ -2280,13 +2359,13 @@ export const en: TranslationTree = {
 			colorPlaceholder: "#3b82f6",
 			attachmentsLabel: "Attachments",
 			attachmentsDesc: "Files or notes to link to this timeblock",
-			addAttachmentButton: "Add Attachment",
+			addAttachmentButton: "Add attachment",
 			addAttachmentTooltip: "Select a file or note using fuzzy search",
 			createButton: "Create timeblock",
 		},
 		calendarEventCreation: {
 			heading: "Create calendar event",
-			dateTimeLabel: "Date & Time: ",
+			dateTimeLabel: "Date & time: ",
 			titleLabel: "Title",
 			titleDesc: "Title for the calendar event",
 			titlePlaceholder: "e.g., Team meeting",
@@ -2301,11 +2380,11 @@ export const en: TranslationTree = {
 			createButton: "Create event",
 			titleRequired: "Event title is required",
 			noCalendarSelected: "No calendar selected",
-			success: "Calendar event \"{title}\" created",
+			success: 'Calendar event "{title}" created',
 			error: "Failed to create calendar event: {message}",
 		},
 		icsNoteCreation: {
-			heading: "Create from ICS Event",
+			heading: "Create from ICS event",
 			titleLabel: "Title",
 			titleDesc: "Title for the new content",
 			folderLabel: "Folder",
@@ -2316,14 +2395,14 @@ export const en: TranslationTree = {
 			endLabel: "End: ",
 			locationLabel: "Location: ",
 			calendarLabel: "Calendar: ",
-			useTemplateLabel: "Use Template",
+			useTemplateLabel: "Use template",
 			useTemplateDesc: "Apply a template when creating the content",
-			templatePathLabel: "Template Path",
+			templatePathLabel: "Template path",
 			templatePathDesc: "Path to the template file",
 			templatePathPlaceholder: "templates/ics-note-template.md",
 		},
 		unscheduledTasksSelector: {
-			title: "Unscheduled Tasks",
+			title: "Unscheduled tasks",
 			placeholder: "Type to search for unscheduled tasks...",
 			instructions: {
 				navigate: "to navigate",
@@ -2332,8 +2411,9 @@ export const en: TranslationTree = {
 			},
 		},
 		migration: {
-			title: "Migrate to New Recurrence System",
-			description: "TaskNotes now uses industry-standard RRULE patterns for recurrence, which enables more complex schedules and better compatibility with other apps.",
+			title: "Migrate to new recurrence system",
+			description:
+				"TaskNotes now uses industry-standard RRULE patterns for recurrence, which enables more complex schedules and better compatibility with other apps.",
 			tasksFound: "{count} task(s) with old recurrence patterns detected",
 			noMigrationNeeded: "No tasks require migration",
 			warnings: {
@@ -2351,37 +2431,39 @@ export const en: TranslationTree = {
 				nlp: "Enhanced natural language processing support",
 			},
 			progress: {
-				title: "Migration Progress",
+				title: "Migration progress",
 				preparing: "Preparing migration...",
 				completed: "Migration completed successfully",
 				failed: "Migration failed",
 			},
 			buttons: {
-				migrate: "Start Migration",
+				migrate: "Start migration",
 				completed: "Close",
 			},
 			errors: {
 				title: "Errors during migration:",
 			},
 			notices: {
-				completedWithErrors: "Migration completed with some errors. Check the error list above.",
+				completedWithErrors:
+					"Migration completed with some errors. Check the error list above.",
 				success: "All tasks migrated successfully!",
 				failed: "Migration failed. Please check the console for details.",
 			},
 			prompt: {
-				message: "TaskNotes detected tasks using the old recurrence format. Would you like to migrate them to the new system now?",
-				migrateNow: "Migrate Now",
-				remindLater: "Remind Me Later",
+				message:
+					"TaskNotes detected tasks using the old recurrence format. Would you like to migrate them to the new system now?",
+				migrateNow: "Migrate now",
+				remindLater: "Remind me later",
 			},
 		},
 		task: {
-				titlePlaceholder: "What needs to be done?",
-				titleLabel: "Title",
+			titlePlaceholder: "What needs to be done?",
+			titleLabel: "Title",
 			titleDetailedPlaceholder: "Task title...",
 			detailsLabel: "Details",
 			detailsPlaceholder: "Add more details...",
 			projectsLabel: "Projects",
-			projectsAdd: "Add Project",
+			projectsAdd: "Add project",
 			projectsTooltip: "Select a project note using fuzzy search",
 			projectsRemoveTooltip: "Remove project",
 			contextsLabel: "Contexts",
@@ -2391,11 +2473,11 @@ export const en: TranslationTree = {
 			timeEstimateLabel: "Time estimate (minutes)",
 			timeEstimatePlaceholder: "30",
 			unsavedChanges: {
-				title: "Unsaved Changes",
+				title: "Unsaved changes",
 				message: "You have unsaved changes. Do you want to save them?",
-				save: "Save Changes",
-				discard: "Discard Changes",
-				cancel: "Keep Editing",
+				save: "Save changes",
+				discard: "Discard changes",
+				cancel: "Keep editing",
 			},
 			dependencies: {
 				blockedBy: "Blocked by",
@@ -2419,7 +2501,7 @@ export const en: TranslationTree = {
 					subtaskSelectFailed: "Failed to open subtask selector",
 				},
 			},
-			customFieldsLabel: "Custom Fields",
+			customFieldsLabel: "Custom fields",
 			actions: {
 				due: "Set due date",
 				scheduled: "Set scheduled date",
@@ -2442,8 +2524,8 @@ export const en: TranslationTree = {
 				remindersPlural: "{count} reminders set",
 			},
 			dateMenu: {
-				dueTitle: "Set Due Date",
-				scheduledTitle: "Set Scheduled Date",
+				dueTitle: "Set due date",
+				scheduledTitle: "Set scheduled date",
 			},
 			userFields: {
 				textPlaceholder: "Enter {field}...",
@@ -2521,7 +2603,7 @@ export const en: TranslationTree = {
 			title: "Edit task",
 			sections: {
 				completions: "Completions",
-				taskInfo: "Task Information",
+				taskInfo: "Task information",
 			},
 			metadata: {
 				totalTrackedTime: "Total tracked time:",
@@ -2552,17 +2634,17 @@ export const en: TranslationTree = {
 		},
 		storageLocation: {
 			title: {
-				migrate: "Migrate pomodoro data?",
+				migrate: "Migrate Pomodoro data?",
 				switch: "Switch to daily notes storage?",
 			},
 			message: {
 				migrate:
-					"This will migrate your existing pomodoro session data to daily notes frontmatter. The data will be grouped by date and stored in each daily note.",
+					"This will migrate your existing Pomodoro session data to daily notes frontmatter. The data will be grouped by date and stored in each daily note.",
 				switch: "Pomodoro session data will be stored in daily notes frontmatter instead of the plugin data file.",
 			},
 			whatThisMeans: "What this means:",
 			bullets: {
-				dailyNotesRequired: "Daily Notes core plugin must remain enabled",
+				dailyNotesRequired: "Daily notes core plugin must remain enabled",
 				storedInNotes: "Data will be stored in your daily notes frontmatter",
 				migrateData: "Existing plugin data will be migrated and then cleared",
 				futureSessions: "Future sessions will be saved to daily notes",
@@ -2579,11 +2661,11 @@ export const en: TranslationTree = {
 			},
 		},
 		dueDate: {
-			title: "Set Due Date",
+			title: "Set due date",
 			taskLabel: "Task: {title}",
 			sections: {
-				dateTime: "Due Date & Time",
-				quickOptions: "Quick Options",
+				dateTime: "Due date & time",
+				quickOptions: "Quick options",
 			},
 			descriptions: {
 				dateTime: "Set when this task should be completed",
@@ -2616,11 +2698,11 @@ export const en: TranslationTree = {
 			},
 		},
 		scheduledDate: {
-			title: "Set Scheduled Date",
+			title: "Set scheduled date",
 			taskLabel: "Task: {title}",
 			sections: {
-				dateTime: "Scheduled Date & Time",
-				quickOptions: "Quick Options",
+				dateTime: "Scheduled date & time",
+				quickOptions: "Quick options",
 			},
 			descriptions: {
 				dateTime: "Set when you plan to work on this task",
@@ -2682,7 +2764,8 @@ export const en: TranslationTree = {
 			startFailed: "Failed to start time tracking",
 		},
 		timeEntry: {
-			mustHaveSpecificTime: "Time entries must have specific times. Please select a time range in week or day view.",
+			mustHaveSpecificTime:
+				"Time entries must have specific times. Please select a time range in week or day view.",
 			noTasksAvailable: "No tasks available to create time entries for",
 			created: "Time entry created for {taskTitle} ({duration} minutes)",
 			createFailed: "Failed to create time entry",
@@ -2694,6 +2777,12 @@ export const en: TranslationTree = {
 			statusSelected: "✓ {label}",
 			priority: "Priority",
 			prioritySelected: "✓ {label}",
+			tags: "Tags",
+			addTag: "Add tag…",
+			removeTag: "Remove {tag}",
+			removeTagInput: "Remove tag…",
+			tagPlaceholder: "Tag or #tag",
+			clearTags: "Clear tags",
 			dueDate: "Due date",
 			scheduledDate: "Scheduled date",
 			reminders: "Reminders",
@@ -2708,12 +2797,13 @@ export const en: TranslationTree = {
 			unarchive: "Unarchive",
 			openNote: "Open note",
 			copyTitle: "Copy task title",
+			quickActions: "Quick actions",
 			noteActions: "Note actions",
 			rename: "Rename",
-			renameTitle: "Rename File",
+			renameTitle: "Rename file",
 			renamePlaceholder: "Enter new name",
 			delete: "Delete",
-			deleteTitle: "Delete File",
+			deleteTitle: "Delete file",
 			deleteMessage: 'Are you sure you want to delete "{name}"?',
 			deleteConfirm: "Delete",
 			copyPath: "Copy path",
@@ -2744,19 +2834,24 @@ export const en: TranslationTree = {
 				removeBlocking: "Remove blocking…",
 				unknownDependency: "Unknown",
 				inputPlaceholder: "[[Task Note]]",
-					notices: {
-						noEntries: "Please enter at least one task",
-						blockedByAdded: "{count} dependency added",
-						blockedByRemoved: "Dependency removed",
-						blockingAdded: "{count} dependent task added",
-						blockingRemoved: "Dependent task removed",
-						unresolved: "Could not resolve: {entries}",
-						noEligibleTasks: "No matching tasks available",
-						updateFailed: "Failed to update dependencies",
-					},
+				notices: {
+					noEntries: "Please enter at least one task",
+					blockedByAdded: "{count} dependency added",
+					blockedByRemoved: "Dependency removed",
+					blockingAdded: "{count} dependent task added",
+					blockingRemoved: "Dependent task removed",
+					unresolved: "Could not resolve: {entries}",
+					noEligibleTasks: "No matching tasks available",
+					updateFailed: "Failed to update dependencies",
 				},
+			},
 			organization: {
 				title: "Organization",
+				contexts: "Contexts",
+				addContext: "Add context…",
+				contextPlaceholder: "context",
+				contextSelected: "✓ {context}",
+				clearContexts: "Clear contexts",
 				projects: "Projects",
 				addToProject: "Add to project…",
 				subtasks: "Subtasks",
@@ -2768,6 +2863,7 @@ export const en: TranslationTree = {
 					addedAsSubtask: "Added {subtask} as subtask of {parent}",
 					addToProjectFailed: "Failed to add task to project",
 					addAsSubtaskFailed: "Failed to add task as subtask",
+					updateContextsFailed: "Failed to update contexts",
 					projectSelectFailed: "Failed to open project selector",
 					subtaskSelectFailed: "Failed to open subtask selector",
 					noEligibleSubtasks: "No eligible tasks available to assign as subtasks",
@@ -2806,6 +2902,7 @@ export const en: TranslationTree = {
 				copyPathSuccess: "File path copied to clipboard",
 				copyUrlSuccess: "Obsidian URL copied to clipboard",
 				updateRecurrenceFailure: "Failed to update task recurrence: {message}",
+				updateTagsFailed: "Failed to update tags",
 			},
 		},
 		priority: {
@@ -2819,13 +2916,13 @@ export const en: TranslationTree = {
 			copyTitle: "Copy title",
 			copyLocation: "Copy location",
 			copyUrl: "Copy URL",
-			copyMarkdown: "Copy as markdown",
+			copyMarkdown: "Copy as Markdown",
 			subscriptionUnknown: "Unknown calendar",
 			notices: {
 				copyTitleSuccess: "Event title copied to clipboard",
 				copyLocationSuccess: "Location copied to clipboard",
 				copyUrlSuccess: "Event URL copied to clipboard",
-				copyMarkdownSuccess: "Event details copied as markdown",
+				copyMarkdownSuccess: "Event details copied as Markdown",
 				copyFailure: "Failed to copy to clipboard",
 				taskCreated: "Task created: {title}",
 				taskCreateFailure: "Failed to create task from event",
@@ -2836,7 +2933,7 @@ export const en: TranslationTree = {
 				linkSelectionFailure: "Failed to open note selection",
 			},
 			markdown: {
-				titleFallback: "Untitled Event",
+				titleFallback: "Untitled event",
 				calendar: "**Calendar:** {value}",
 				date: "**Date & Time:** {value}",
 				location: "**Location:** {value}",
@@ -2874,7 +2971,7 @@ export const en: TranslationTree = {
 	services: {
 		pomodoro: {
 			notices: {
-				alreadyRunning: "A pomodoro is already running",
+				alreadyRunning: "A Pomodoro is already running",
 				resumeCurrentSession: "Resume the current session instead of starting a new one",
 				timerAlreadyRunning: "A timer is already running",
 				resumeSessionInstead: "Resume the current session instead of starting a new one",
@@ -2885,7 +2982,7 @@ export const en: TranslationTree = {
 				stoppedAndReset: "Pomodoro stopped and reset",
 				migrationSuccess: "Successfully migrated {count} pomodoro sessions to daily notes.",
 				migrationFailure:
-					"Failed to migrate pomodoro data. Please try again or check the console for details.",
+					"Failed to migrate Pomodoro data. Please try again or check the console for details.",
 			},
 		},
 		icsSubscription: {
@@ -3016,6 +3113,7 @@ export const en: TranslationTree = {
 			recurrenceTooltip: "{label}: {value}",
 			reminderTooltipOne: "1 reminder set (click to manage)",
 			reminderTooltipMany: "{count} reminders set (click to manage)",
+			detailsTooltip: "Task has details",
 			projectTooltip: "This task is used as a project (click to filter subtasks)",
 			expandSubtasks: "Expand subtasks",
 			collapseSubtasks: "Collapse subtasks",
@@ -3048,13 +3146,13 @@ export const en: TranslationTree = {
 			properties: "Properties",
 			sort: "Sort",
 			newTask: "New",
-			expandAllGroups: "Expand All Groups",
-			collapseAllGroups: "Collapse All Groups",
+			expandAllGroups: "Expand all groups",
+			collapseAllGroups: "Collapse all groups",
 			searchTasksPlaceholder: "Search tasks...",
 			searchTasksTooltip: "Search task titles",
 			filterUnavailable: "Filter bar temporarily unavailable",
 			toggleFilter: "Toggle filter",
-			activeFiltersTooltip: "Active filters – Click to modify, right-click to clear",
+			activeFiltersTooltip: "Active filters – click to modify, right-click to clear",
 			configureVisibleProperties: "Configure visible properties",
 			sortAndGroupOptions: "Sort and group options",
 			sortMenuHeader: "Sort",
@@ -3062,8 +3160,8 @@ export const en: TranslationTree = {
 			groupMenuHeader: "Group",
 			createNewTask: "Create new task",
 			filter: "Filter",
-			displayOrganization: "Display & Organization",
-			viewOptions: "View Options",
+			displayOrganization: "Display & organization",
+			viewOptions: "View options",
 			addFilter: "Add filter",
 			addFilterGroup: "Add filter group",
 			addFilterTooltip: "Add a new filter condition",
@@ -3091,7 +3189,7 @@ export const en: TranslationTree = {
 			expandCollapseFilters: "Click to expand/collapse filter conditions",
 			expandCollapseSort: "Click to expand/collapse sorting and grouping options",
 			expandCollapseViewOptions: "Click to expand/collapse view-specific options",
-			naturalLanguageDates: "Natural Language Dates",
+			naturalLanguageDates: "Natural language dates",
 			naturalLanguageExamples: "Show natural language date examples",
 			enterNumericValue: "Enter a numeric value to filter by",
 			enterDateValue: "Enter a date using natural language or ISO format",
@@ -3102,19 +3200,19 @@ export const en: TranslationTree = {
 			dragToReorder: "Drag to reorder views",
 			loadSavedView: "Load saved view: {name}",
 			deleteView: "Delete view",
-			deleteViewTitle: "Delete View",
+			deleteViewTitle: "Delete view",
 			deleteViewMessage: 'Are you sure you want to delete the view "{name}"?',
-			manageAllReminders: "Manage All Reminders...",
-			clearAllReminders: "Clear All Reminders",
+			manageAllReminders: "Manage all reminders...",
+			clearAllReminders: "Clear all reminders",
 			customRecurrence: "Custom recurrence...",
 			clearRecurrence: "Clear recurrence",
 			sortOptions: {
-				dueDate: "Due Date",
-				scheduledDate: "Scheduled Date",
+				dueDate: "Due date",
+				scheduledDate: "Scheduled date",
 				priority: "Priority",
 				status: "Status",
 				title: "Title",
-				createdDate: "Created Date",
+				createdDate: "Created date",
 				tags: "Tags",
 				ascending: "Ascending",
 				descending: "Descending",
@@ -3125,10 +3223,10 @@ export const en: TranslationTree = {
 				priority: "Priority",
 				context: "Context",
 				project: "Project",
-				dueDate: "Due Date",
-				scheduledDate: "Scheduled Date",
+				dueDate: "Due date",
+				scheduledDate: "Scheduled date",
 				tags: "Tags",
-				completedDate: "Completed Date",
+				completedDate: "Completed date",
 			},
 			subgroupLabel: "SUBGROUP",
 			notices: {
@@ -3155,29 +3253,29 @@ export const en: TranslationTree = {
 			priority: "Priority",
 			context: "Context",
 			project: "Project",
-			dueDate: "Due Date",
-			scheduledDate: "Scheduled Date",
+			dueDate: "Due date",
+			scheduledDate: "Scheduled date",
 			tags: "Tags",
-			completedDate: "Completed Date",
+			completedDate: "Completed date",
 			subgroup: "SUBGROUP",
 		},
 		propertyVisibilityDropdown: {
-			coreProperties: "CORE PROPERTIES",
+			coreProperties: "Core properties",
 			organization: "ORGANIZATION",
-			customProperties: "CUSTOM PROPERTIES",
+			customProperties: "Custom properties",
 			failed: "Failed to show properties menu",
 			properties: {
-				statusDot: "Status Dot",
-				priorityDot: "Priority Dot",
-				dueDate: "Due Date",
-				scheduledDate: "Scheduled Date",
-				timeEstimate: "Time Estimate",
-				totalTrackedTime: "Total Tracked Time",
-				checklistProgress: "Checklist Progress",
+				statusDot: "Status dot",
+				priorityDot: "Priority dot",
+				dueDate: "Due date",
+				scheduledDate: "Scheduled date",
+				timeEstimate: "Time estimate",
+				totalTrackedTime: "Total tracked time",
+				checklistProgress: "Checklist progress",
 				recurrence: "Recurrence",
-				completedDate: "Completed Date",
-				createdDate: "Created Date",
-				modifiedDate: "Modified Date",
+				completedDate: "Completed date",
+				createdDate: "Created date",
+				modifiedDate: "Modified date",
 				projects: "Projects",
 				contexts: "Contexts",
 				tags: "Tags",
@@ -3188,8 +3286,8 @@ export const en: TranslationTree = {
 		reminderContextMenu: {
 			remindBeforeDue: "Remind before due...",
 			remindBeforeScheduled: "Remind before scheduled...",
-			manageAllReminders: "Manage All Reminders...",
-			clearAllReminders: "Clear All Reminders",
+			manageAllReminders: "Manage all reminders...",
+			clearAllReminders: "Clear all reminders",
 			quickReminders: {
 				atTime: "At time of event",
 				fiveMinutesBefore: "5 minutes before",
@@ -3213,7 +3311,7 @@ export const en: TranslationTree = {
 			customRecurrence: "Custom recurrence...",
 			clearRecurrence: "Clear recurrence",
 			customRecurrenceModal: {
-				title: "Custom Recurrence",
+				title: "Custom recurrence",
 				startDate: "Start date",
 				startDateDesc: "The date when the recurrence pattern begins",
 				startTime: "Start time",
@@ -3224,7 +3322,7 @@ export const en: TranslationTree = {
 				completionDate: "Completion date",
 				frequency: "Frequency",
 				interval: "Interval",
-				intervalDesc: "Every X days/weeks/months/years",
+				intervalDesc: "Every x days/weeks/months/years",
 				daysOfWeek: "Days of week",
 				daysOfWeekDesc: "Select specific days (for weekly recurrence)",
 				monthlyRecurrence: "Monthly recurrence",

@@ -1,5 +1,5 @@
-/* eslint-disable no-console */
-import { FieldMapping, TaskInfo } from "../types";
+ 
+import { FieldMapping, PriorityConfig, StatusConfig, TaskInfo } from "../types";
 import type { UserMappedField } from "../types/settings";
 import {
 	isPropertyForField,
@@ -18,7 +18,9 @@ import {
 export class FieldMapper {
 	constructor(
 		private mapping: FieldMapping,
-		private userFields: UserMappedField[] = []
+		private userFields: UserMappedField[] = [],
+		private statuses: readonly StatusConfig[] = [],
+		private priorities: readonly PriorityConfig[] = []
 	) {}
 
 	/**
@@ -26,6 +28,18 @@ export class FieldMapper {
 	 */
 	updateUserFields(fields: UserMappedField[]): void {
 		this.userFields = fields;
+	}
+
+	/**
+	 * Update status and priority definitions used to normalize values read
+	 * directly from Obsidian properties or Bases.
+	 */
+	updateConfiguredValues(
+		statuses: readonly StatusConfig[],
+		priorities: readonly PriorityConfig[]
+	): void {
+		this.statuses = statuses;
+		this.priorities = priorities;
 	}
 
 	/**
@@ -48,11 +62,23 @@ export class FieldMapper {
 	 * on the returned object, keyed by their frontmatter key (e.g. "start_date").
 	 */
 	mapFromFrontmatter(
-		frontmatter: any,
+		frontmatter: unknown,
 		filePath: string,
 		storeTitleInFilename?: boolean
 	): Partial<TaskInfo> {
-		return mapTaskFromFrontmatter(this.mapping, frontmatter, filePath, storeTitleInFilename, this.userFields);
+		const frontmatterRecord =
+			frontmatter !== null && typeof frontmatter === "object" && !Array.isArray(frontmatter)
+				? (frontmatter as Record<string, unknown>)
+				: undefined;
+		return mapTaskFromFrontmatter(
+			this.mapping,
+			frontmatterRecord,
+			filePath,
+			storeTitleInFilename,
+			this.userFields,
+			this.statuses,
+			this.priorities
+		);
 	}
 
 	/**
@@ -64,7 +90,7 @@ export class FieldMapper {
 		taskData: Partial<TaskInfo>,
 		taskTag?: string,
 		storeTitleInFilename?: boolean
-	): any {
+	): Record<string, unknown> {
 		return mapTaskToFrontmatter(this.mapping, taskData, taskTag, storeTitleInFilename, this.userFields);
 	}
 

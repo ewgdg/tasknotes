@@ -53,8 +53,8 @@
 
 .tasknotes-plugin .settings-view__tab-button--active,
 .tasknotes-plugin .settings-view__tab-button.is-active {
-    background: var(--interactive-accent) !important;
-    color: var(--text-on-accent) !important;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
 }
 
 /* ================================================
@@ -136,8 +136,8 @@
 }
 
 .tasknotes-settings__card-secondary-text {
-    font-size: 12px !important;
-    color: var(--text-muted) !important;
+    font-size: 12px;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -213,16 +213,16 @@ select.tasknotes-settings__card-input {
 }
 
 .tasknotes-settings__card-input[type="checkbox"] {
-    width: 16px !important;
-    height: 16px !important;
-    min-width: 16px !important;
-    min-height: 16px !important;
-    max-width: 16px !important;
-    max-height: 16px !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    flex-shrink: 0 !important;
-    align-self: center !important;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    max-width: 16px;
+    max-height: 16px;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+    align-self: center;
 }
 
 .tasknotes-settings__card-input[type="color"] {
@@ -257,7 +257,7 @@ select.tasknotes-settings__card-input {
     color: var(--text-normal);
     font-size: 13px;
     font-weight: 500;
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -279,7 +279,7 @@ select.tasknotes-settings__card-input {
 
 .tasknotes-settings__card-action-btn--delete {
     background: var(--color-red);
-    color: white;
+    color: var(--text-on-accent);
     border-color: var(--color-red);
 }
 
@@ -293,23 +293,23 @@ select.tasknotes-settings__card-input {
 .tasknotes-settings__card-header-btn {
     width: 20px;
     height: 20px;
-    border: none !important;
+    border: none;
     background: transparent;
     color: var(--text-muted);
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     border-radius: 3px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: none !important;
-    outline: none !important;
+    box-shadow: none;
+    outline: none;
     padding: 0;
 }
 
 .tasknotes-settings__card-header-btn:focus {
-    box-shadow: none !important;
-    outline: none !important;
-    border: none !important;
+    box-shadow: none;
+    outline: none;
+    border: none;
 }
 
 .tasknotes-settings__card-header-btn:hover {
@@ -319,7 +319,7 @@ select.tasknotes-settings__card-input {
 
 .tasknotes-settings__card-header-btn--delete:hover {
     background: var(--color-red);
-    color: white;
+    color: var(--text-on-accent);
 }
 
 /* Status Badges */
@@ -334,12 +334,12 @@ select.tasknotes-settings__card-input {
 
 .tasknotes-settings__card-status-badge--active {
     background: var(--color-green);
-    color: white;
+    color: var(--text-on-accent);
 }
 
 .tasknotes-settings__card-status-badge--inactive {
     background: var(--color-red);
-    color: white;
+    color: var(--text-on-accent);
 }
 
 .tasknotes-settings__card-info-badge {
@@ -370,7 +370,7 @@ select.tasknotes-settings__card-input {
     border-radius: 16px;
     font-size: 12px;
     color: var(--text-normal);
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .tasknotes-settings__project-item:hover {
@@ -397,7 +397,7 @@ select.tasknotes-settings__card-input {
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
     flex-shrink: 0;
 }
 
@@ -425,7 +425,7 @@ select.tasknotes-settings__card-input {
     align-items: center;
     justify-content: center;
     border-radius: 3px;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, opacity 0.2s ease;
     opacity: 0.6;
 }
 
@@ -487,12 +487,12 @@ select.tasknotes-settings__card-input {
 
 /* Collapsible card support */
 .tasknotes-settings__card--collapsible {
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease;
 }
 
 .tasknotes-settings__card--collapsible .tasknotes-settings__card-content,
 .tasknotes-settings__card--collapsible .tasknotes-settings__card-actions {
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, max-height 0.2s ease, padding 0.2s ease;
     overflow: hidden;
 }
 
@@ -516,7 +516,7 @@ select.tasknotes-settings__card-input {
 /* Collapse button styling */
 .tasknotes-settings__card-collapse-btn {
     opacity: 0.7;
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .tasknotes-settings__card-collapse-btn:hover {
@@ -531,7 +531,7 @@ select.tasknotes-settings__card-input {
 
 /* Clickable header styling */
 .tasknotes-settings__card-header--clickable {
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     user-select: none;
 }
 
@@ -601,7 +601,8 @@ select.tasknotes-settings__card-input {
     padding: var(--tn-spacing-md);
     background: var(--background-secondary);
     border-radius: var(--tn-radius-sm);
-    border-left: 3px solid var(--interactive-accent);
+    border: 1px solid var(--background-modifier-border);
+    border-inline-start-color: var(--interactive-accent);
 }
 
 .tasknotes-webhook-help-header {
@@ -650,8 +651,8 @@ select.tasknotes-settings__card-input {
     color: var(--text-normal);
     font-size: var(--tn-font-size-sm);
     font-weight: 500;
-    cursor: var(--cursor, pointer);
-    transition: all 0.2s ease;
+    cursor: var(--cursor-link, pointer);
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .tasknotes-webhook-modal-btn:hover {
@@ -720,7 +721,7 @@ select.tasknotes-settings__card-input {
     user-select: all;
     border: 1px solid var(--background-modifier-border);
     margin: var(--tn-spacing-md) 0;
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
 }
 
 .tasknotes-webhook-secret-code:hover {
@@ -912,13 +913,13 @@ select.tasknotes-settings__card-input {
     width: 16px;
     height: 16px;
     margin: 0;
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
 }
 
 .tasknotes-settings__property-label {
     font-size: 13px;
     color: var(--text-normal);
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     flex: 1;
     line-height: 1.3;
 }
@@ -932,7 +933,7 @@ select.tasknotes-settings__card-input {
    ================================================ */
 
 .tasknotes-settings__collapsible-header {
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     padding: 8px 12px;
     margin: -8px -12px 12px -12px;
     border-radius: 4px;
@@ -966,7 +967,7 @@ select.tasknotes-settings__card-input {
 }
 
 .tasknotes-settings__collapsible-content {
-    transition: all 0.2s ease;
+    transition: opacity 0.2s ease, max-height 0.2s ease;
 }
 
 /* Nested collapsible sections (e.g., filter settings within custom fields) */
@@ -978,7 +979,7 @@ select.tasknotes-settings__card-input {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    cursor: var(--cursor, pointer);
+    cursor: var(--cursor-link, pointer);
     padding: 8px 12px;
     margin: 0 -12px 12px -12px;
     border-radius: 4px;
@@ -1142,7 +1143,8 @@ select.tasknotes-settings__card-input {
     padding: 12px;
     background: var(--background-secondary);
     border-radius: 6px;
-    border-left: 3px solid var(--interactive-accent);
+    border: 1px solid var(--background-modifier-border);
+    border-inline-start-color: var(--interactive-accent);
     margin-bottom: 16px;
 }
 
@@ -1157,6 +1159,10 @@ select.tasknotes-settings__card-input {
 .tasknotes-calendar-info {
     font-size: 0.9em;
     color: var(--text-muted);
+}
+
+.tasknotes-calendar-info--warning {
+    color: var(--text-error);
 }
 
 .tasknotes-calendar-help {

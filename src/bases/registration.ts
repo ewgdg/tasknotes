@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+ 
 import TaskNotesPlugin from "../main";
 import { requireApiVersion } from "obsidian";
 import type { BasesAllOptions, BasesOptions } from "obsidian";
@@ -95,6 +95,19 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 						default: false,
 					},
 					{
+						type: "text",
+						key: "pinnedColumns",
+						displayName: "Pinned Columns",
+						placeholder: "Comma-separated column values to keep visible",
+						default: "",
+					},
+					{
+						type: "toggle",
+						key: "hideEmptySwimLanes",
+						displayName: "Hide Empty Swimlanes",
+						default: false,
+					},
+					{
 						type: "toggle",
 						key: "enableSearch",
 						displayName: "Enable search box",
@@ -117,6 +130,13 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 						key: "columnOrder",
 						displayName: "Column Order (Advanced)",
 						placeholder: "Auto-managed when dragging columns",
+						default: "{}",
+					},
+					{
+						type: "text",
+						key: "swimLaneOrder",
+						displayName: "Swim Lane Order (Advanced)",
+						placeholder: "JSON object keyed by swim lane property",
 						default: "{}",
 					},
 					{
@@ -163,6 +183,18 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 										key: "showRecurring",
 										displayName: t("events.showRecurringTasks"),
 										default: calendarSettings.defaultShowRecurring,
+									},
+									{
+										type: "toggle",
+										key: "showCompletedRecurringInstances",
+										displayName: t("events.showCompletedRecurringInstances"),
+										default: true,
+									},
+									{
+										type: "toggle",
+										key: "showSkippedRecurringInstances",
+										displayName: t("events.showSkippedRecurringInstances"),
+										default: true,
 									},
 									{
 										type: "toggle",
@@ -234,6 +266,16 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 											"timeGridDay": "Day",
 											"listWeek": "List",
 											"multiMonthYear": "Year",
+										},
+									},
+									{
+										type: "dropdown",
+										key: "heightMode",
+										displayName: t("layout.heightMode"),
+										default: "fill",
+										options: {
+											fill: t("layout.heightModeFill"),
+											auto: t("layout.heightModeAuto"),
 										},
 									},
 									{
@@ -518,30 +560,84 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 				name: "TaskNotes Mini Calendar",
 				icon: "tasknotes-simple",
 				factory: buildMiniCalendarViewFactory(plugin),
-				options: () => [
-					{
-						type: "property",
-						key: "dateProperty",
-						displayName: "Date Property",
-						placeholder: "Select property to show on calendar",
-						default: "file.ctime",
-						filter: (prop: string) => {
-							// Show date-type properties from all sources
-							return prop.startsWith("note.") || prop.startsWith("file.") || prop.startsWith("task.");
+				options: () => {
+					const t = (key: string) =>
+						plugin.i18n.translate(`views.basesCalendar.settings.${key}`);
+					const options: BasesAllOptions[] = [
+						{
+							type: "property",
+							key: "dateProperty",
+							displayName: "Date Property",
+							placeholder: "Select property to show on calendar",
+							default: "file.ctime",
+							filter: (prop: string) => {
+								// Show date-type properties from all sources
+								return prop.startsWith("note.") || prop.startsWith("file.") || prop.startsWith("task.");
+							},
 						},
-					},
-					{
-						type: "property",
-						key: "titleProperty",
-						displayName: "Title Property",
-						placeholder: "Select property to use as title",
-						default: "file.name",
-						filter: (prop: string) => {
-							// Show text properties (note, formula, file)
-							return prop.startsWith("note.") || prop.startsWith("formula.") || prop.startsWith("file.");
+						{
+							type: "property",
+							key: "titleProperty",
+							displayName: "Title Property",
+							placeholder: "Select property to use as title",
+							default: "file.name",
+							filter: (prop: string) => {
+								// Show text properties (note, formula, file)
+								return prop.startsWith("note.") || prop.startsWith("formula.") || prop.startsWith("file.");
+							},
 						},
-					},
-				],
+					];
+
+					if (plugin.icsSubscriptionService) {
+						const subscriptions = plugin.icsSubscriptionService.getSubscriptions();
+						if (subscriptions.length > 0) {
+							options.push({
+								type: "group",
+								displayName: t("groups.calendarSubscriptions"),
+								items: subscriptions.map((sub) => ({
+									type: "toggle",
+									key: `showICS_${sub.id}`,
+									displayName: sub.name,
+									default: true,
+								})),
+							});
+						}
+					}
+
+					if (plugin.googleCalendarService) {
+						const availableCalendars = plugin.googleCalendarService.getAvailableCalendars();
+						if (availableCalendars.length > 0) {
+							options.push({
+								type: "group",
+								displayName: t("groups.googleCalendars") || "Google Calendars",
+								items: availableCalendars.map((cal) => ({
+									type: "toggle",
+									key: `showGoogleCalendar_${cal.id}`,
+									displayName: cal.summary || cal.id,
+									default: true,
+								})),
+							});
+						}
+					}
+
+					if (plugin.microsoftCalendarService) {
+						const availableCalendars = plugin.microsoftCalendarService.getAvailableCalendars();
+						if (availableCalendars.length > 0) {
+							options.push({
+								type: "group",
+								displayName: t("groups.microsoftCalendars") || "Microsoft Calendars",
+								items: availableCalendars.map((cal) => ({
+									type: "toggle",
+									key: `showMicrosoftCalendar_${cal.id}`,
+									displayName: cal.summary || cal.id,
+									default: true,
+								})),
+							});
+						}
+					}
+
+					return options;
+				},
 			});
 
 			// Consider it successful if any view registered successfully
@@ -551,10 +647,10 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 			}
 
 			// Refresh existing Bases views
-			plugin.app.workspace.iterateAllLeaves((leaf) => {
-				if (leaf.view?.getViewType?.() === "bases") {
-					const view = leaf.view as any;
-					if (typeof view.refresh === "function") {
+				plugin.app.workspace.iterateAllLeaves((leaf) => {
+					if (leaf.view?.getViewType?.() === "bases") {
+						const view = leaf.view as { refresh?: () => void };
+						if (typeof view.refresh === "function") {
 						try {
 							view.refresh();
 						} catch (refreshError) {
@@ -581,7 +677,7 @@ export async function registerBasesTaskList(plugin: TaskNotesPlugin): Promise<vo
 
 	// If that fails, try a few more times with short delays
 	for (let i = 0; i < 5; i++) {
-		await new Promise((r) => setTimeout(r, 200));
+		await new Promise((r) => window.setTimeout(r, 200));
 		if (await attemptRegistration()) {
 			return;
 		}

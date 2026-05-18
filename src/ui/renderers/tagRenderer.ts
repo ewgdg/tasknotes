@@ -1,8 +1,11 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- Renderer utilities check created elements before attaching interactions. */
 // Tag rendering utilities following TaskNotes coding standards
+import { stringifyUnknown } from "../../utils/stringUtils";
+import { renderTextWithLinks, type LinkServices } from "./linkRenderer";
 
 export interface TagServices {
 	onTagClick?: (tag: string, event: MouseEvent | KeyboardEvent) => void | Promise<void>;
+	linkServices?: LinkServices;
 }
 
 /** Render a single tag string as an Obsidian-like tag element */
@@ -28,7 +31,7 @@ export function renderTag(container: HTMLElement, tag: string, services?: TagSer
 		el.addEventListener("click", (e) => {
 			e.preventDefault();
 			e.stopPropagation();
-			services.onTagClick!(normalized, e as MouseEvent);
+			void services.onTagClick!(normalized, e);
 		});
 
 		// Add keyboard support
@@ -36,7 +39,7 @@ export function renderTag(container: HTMLElement, tag: string, services?: TagSer
 			if (e.key === "Enter" || e.key === " ") {
 				e.preventDefault();
 				e.stopPropagation();
-				services.onTagClick!(normalized, e as any);
+				void services.onTagClick!(normalized, e);
 			}
 		});
 	}
@@ -58,13 +61,13 @@ export function renderTagsValue(
 			.filter((t) => t !== null && t !== undefined && typeof t === "string");
 
 		validTags.forEach((t, idx) => {
-			if (idx > 0) container.appendChild(document.createTextNode(" "));
+			if (idx > 0) container.appendChild(activeDocument.createTextNode(" "));
 			renderTag(container, String(t), services);
 		});
 		return;
 	}
 	// Fallback: not a recognizable tag value
-	if (value != null) container.appendChild(document.createTextNode(String(value)));
+	if (value != null) container.appendChild(activeDocument.createTextNode(stringifyUnknown(value)));
 }
 
 /** Render contexts with @ prefix */
@@ -74,35 +77,7 @@ export function renderContextsValue(
 	services?: TagServices
 ): void {
 	if (typeof value === "string") {
-		const normalized = normalizeContext(value);
-		if (normalized) {
-			const colorClass = getContextColorClass(normalized);
-			const el = container.createEl("span", {
-				cls: `context-tag ${colorClass}`,
-				text: normalized,
-				attr: {
-					role: "button",
-					tabindex: "0",
-					"data-tn-click-exclude": "true",
-				},
-			});
-
-			if (services?.onTagClick) {
-				el.addEventListener("click", (e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					services.onTagClick!(normalized, e as MouseEvent);
-				});
-
-				el.addEventListener("keydown", (e) => {
-					if (e.key === "Enter" || e.key === " ") {
-						e.preventDefault();
-						e.stopPropagation();
-						services.onTagClick!(normalized, e);
-					}
-				});
-			}
-		}
+		renderContextItem(container, value, services);
 		return;
 	}
 	if (Array.isArray(value)) {
@@ -111,47 +86,82 @@ export function renderContextsValue(
 			.filter((c) => c !== null && c !== undefined && typeof c === "string");
 
 		validContexts.forEach((context, idx) => {
-			if (idx > 0) container.appendChild(document.createTextNode(", "));
-
-			// Render each context directly instead of recursively calling renderContextsValue
-			const normalized = normalizeContext(context);
-
-			if (normalized) {
-				const colorClass = getContextColorClass(normalized);
-				const el = container.createEl("span", {
-					cls: `context-tag ${colorClass}`,
-					text: normalized,
-					attr: {
-						role: "button",
-						tabindex: "0",
-						"data-tn-click-exclude": "true",
-					},
-				});
-
-				if (services?.onTagClick) {
-					el.addEventListener("click", (e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						services.onTagClick!(normalized, e as MouseEvent);
-					});
-
-					el.addEventListener("keydown", (e) => {
-						if (e.key === "Enter" || e.key === " ") {
-							e.preventDefault();
-							e.stopPropagation();
-							services.onTagClick!(normalized, e);
-						}
-					});
-				}
-			} else {
-				// If normalization fails, render as plain text
-				container.appendChild(document.createTextNode(String(context)));
+			if (idx > 0) container.appendChild(activeDocument.createTextNode(", "));
+			if (!renderContextItem(container, context, services)) {
+				container.appendChild(activeDocument.createTextNode(String(context)));
 			}
 		});
 		return;
 	}
 	// Fallback
-	if (value != null) container.appendChild(document.createTextNode(String(value)));
+	if (value != null) container.appendChild(activeDocument.createTextNode(stringifyUnknown(value)));
+}
+
+function renderContextItem(
+	container: HTMLElement,
+	value: string,
+	services?: TagServices
+): boolean {
+	const linkText = stripContextPrefix(value);
+	if (services?.linkServices && isLinkLikeContext(linkText)) {
+		const colorClass = getContextColorClass(linkText);
+		const el = container.createEl("span", {
+			cls: `context-tag context-tag--link ${colorClass}`,
+			attr: {
+				"data-tn-click-exclude": "true",
+			},
+		});
+		el.appendChild(activeDocument.createTextNode("@"));
+		renderTextWithLinks(el, linkText, services.linkServices);
+		return true;
+	}
+
+	const normalized = normalizeContext(value);
+	if (!normalized) return false;
+
+	const colorClass = getContextColorClass(normalized);
+	const el = container.createEl("span", {
+		cls: `context-tag ${colorClass}`,
+		text: normalized,
+		attr: {
+			role: "button",
+			tabindex: "0",
+			"data-tn-click-exclude": "true",
+		},
+	});
+
+	if (services?.onTagClick) {
+		el.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			void services.onTagClick?.(normalized, e);
+		});
+
+		el.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				e.stopPropagation();
+				void services.onTagClick?.(normalized, e);
+			}
+		});
+	}
+
+	return true;
+}
+
+function stripContextPrefix(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("@")) return trimmed;
+	return trimmed.slice(1).trim();
+}
+
+function isLinkLikeContext(value: string): boolean {
+	return (
+		/\[\[[^[\]]+\]\]/.test(value) ||
+		/\[[^\]]+\]\([^)]+\)/.test(value) ||
+		/<https?:\/\/[^\s>]+>/i.test(value) ||
+		/https?:\/\/[^\s<>()]+[^\s<>().,;:!?]/i.test(value)
+	);
 }
 
 /**
@@ -173,7 +183,7 @@ export function normalizeTag(raw: string): string | null {
 	}
 
 	return cleaned ? `#${cleaned}` : null;
-}/**
+} /**
  * Generate a simple hash from a string for consistent color mapping.
  * Uses djb2 algorithm for good distribution with short strings.
  */

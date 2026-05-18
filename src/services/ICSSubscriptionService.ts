@@ -1,10 +1,74 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- ICS parsing normalizes optional event fields before use. */
 import { Notice, requestUrl, TFile } from "obsidian";
 import ICAL from "ical.js";
 import { ICSSubscription, ICSEvent, ICSCache } from "../types";
 import { EventEmitter } from "../utils/EventEmitter";
 import TaskNotesPlugin from "../main";
-import { TranslationKey } from "../i18n";
+import type { InterpolationValues, TranslationKey } from "../i18n";
+import { stringifyUnknown } from "../utils/stringUtils";
+
+const ICS_RECURRENCE_EXPANSION_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+const MAX_RECURRING_ICS_VISIBLE_INSTANCES = 3000;
+const MAX_RECURRING_ICS_ITERATIONS = 10000;
+
+type VaultAdapterWithBasePath = {
+	getBasePath?: () => string;
+};
+
+function getVTimezoneTzid(vtimezone: ICAL.Component): string | null {
+	const value = vtimezone.getFirstPropertyValue("tzid");
+	return typeof value === "string" ? value.trim() : null;
+}
+
+function getVTimezoneAliases(tzid: string): string[] {
+	const alias = tzid.replace(/\s+\([^)]+\)$/u, "").trim();
+	return alias && alias !== tzid ? [alias] : [];
+}
+
+function findVTimezone(calendar: ICAL.Component, tzid: string): ICAL.Component | null {
+	return (
+		calendar
+			.getAllSubcomponents("vtimezone")
+			.find((vtimezone) => getVTimezoneTzid(vtimezone) === tzid) ?? null
+	);
+}
+
+function cloneVTimezoneWithTzid(vtimezone: ICAL.Component, tzid: string): ICAL.Component {
+	const aliasVTimezone = new ICAL.Component(
+		JSON.parse(JSON.stringify(vtimezone.toJSON())) as unknown[]
+	);
+	aliasVTimezone.updatePropertyWithValue("tzid", tzid);
+	return aliasVTimezone;
+}
+
+function registerCalendarVTimezones(calendar: ICAL.Component): void {
+	const vtimezones = calendar.getAllSubcomponents("vtimezone");
+
+	vtimezones.forEach((vtimezone) => {
+		const tzid = getVTimezoneTzid(vtimezone);
+		ICAL.TimezoneService.register(vtimezone);
+
+		if (!tzid) {
+			return;
+		}
+
+		getVTimezoneAliases(tzid).forEach((alias) => {
+			const existingAliasVTimezone = findVTimezone(calendar, alias);
+			const aliasVTimezone =
+				existingAliasVTimezone ?? cloneVTimezoneWithTzid(vtimezone, alias);
+			const timezone = new ICAL.Timezone({
+				component: aliasVTimezone,
+				tzid: alias,
+			});
+
+			if (!existingAliasVTimezone) {
+				calendar.addSubcomponent(aliasVTimezone);
+			}
+
+			ICAL.TimezoneService.register(timezone);
+		});
+	});
+}
 
 export class ICSSubscriptionService extends EventEmitter {
 	private plugin: TaskNotesPlugin;
@@ -15,11 +79,12 @@ export class ICSSubscriptionService extends EventEmitter {
 	private pendingRefreshes: Set<string> = new Set(); // Track in-progress refreshes to avoid duplicates
 	private lastFetched: Map<string, string> = new Map(); // In-memory storage for last fetch timestamps (ISO strings)
 	private lastError: Map<string, string> = new Map(); // In-memory storage for last error messages
+	private destroyed = false;
 
 	// Grace period after cache expiration to show stale data while refreshing (5 minutes)
 	private readonly CACHE_GRACE_PERIOD = 5 * 60 * 1000;
 
-	private translate(key: TranslationKey, variables?: Record<string, any>): string {
+	private translate(key: TranslationKey, variables?: InterpolationValues): string {
 		return this.plugin.i18n.translate(key, variables);
 	}
 
@@ -60,6 +125,7 @@ export class ICSSubscriptionService extends EventEmitter {
 	}
 
 	async initialize(): Promise<void> {
+		this.destroyed = false;
 		// Load subscriptions from plugin data
 		await this.loadSubscriptions();
 
@@ -125,6 +191,10 @@ export class ICSSubscriptionService extends EventEmitter {
 	async addSubscription(subscription: Omit<ICSSubscription, "id">): Promise<ICSSubscription> {
 		const newSubscription: ICSSubscription = {
 			...subscription,
+			filePath:
+				subscription.type === "local" && subscription.filePath
+					? this.normalizeLocalICSFilePathIfPossible(subscription.filePath)
+					: subscription.filePath,
 			id: this.generateId(),
 		};
 
@@ -154,7 +224,12 @@ export class ICSSubscriptionService extends EventEmitter {
 		}
 
 		const oldSubscription = this.subscriptions[index];
-		const updatedSubscription = { ...oldSubscription, ...updates };
+		const normalizedUpdates: Partial<ICSSubscription> = { ...updates };
+		if (typeof updates.filePath === "string") {
+			normalizedUpdates.filePath = this.normalizeLocalICSFilePathIfPossible(updates.filePath);
+		}
+
+		const updatedSubscription = { ...oldSubscription, ...normalizedUpdates };
 		this.subscriptions[index] = updatedSubscription;
 
 		await this.saveSubscriptions();
@@ -231,7 +306,12 @@ export class ICSSubscriptionService extends EventEmitter {
 					throw new Error("Local subscription missing file path");
 				}
 
-				icsData = await this.readLocalICSFile(subscription.filePath);
+				const normalizedFilePath = this.normalizeLocalICSFilePath(subscription.filePath);
+				icsData = await this.readLocalICSFile(normalizedFilePath);
+				if (subscription.filePath !== normalizedFilePath) {
+					subscription.filePath = normalizedFilePath;
+					await this.saveSubscriptions();
+				}
 			} else {
 				throw new Error("Unknown subscription type");
 			}
@@ -301,11 +381,8 @@ export class ICSSubscriptionService extends EventEmitter {
 			const jcalData = ICAL.parse(icsData);
 			const comp = new ICAL.Component(jcalData);
 
-			// Register VTIMEZONE components before processing events
-			const vtimezones = comp.getAllSubcomponents("vtimezone");
-			vtimezones.forEach((vtimezone: ICAL.Component) => {
-				(ICAL as any).TimezoneService.register(vtimezone);
-			});
+			// Register VTIMEZONE components before processing events.
+			registerCalendarVTimezones(comp);
 
 			const vevents = comp.getAllSubcomponents("vevent");
 			const events: ICSEvent[] = [];
@@ -321,29 +398,29 @@ export class ICSSubscriptionService extends EventEmitter {
 				if (!uid) return;
 
 				// Check if this is a modified instance (has RECURRENCE-ID)
-				const recurrenceId = (vevent as any).getFirstPropertyValue("recurrence-id");
+				const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
 				if (recurrenceId) {
 					if (!modifiedInstances.has(uid)) {
 						modifiedInstances.set(uid, new Map());
 					}
-					const recurrenceIdStr = recurrenceId.toString();
+					const recurrenceIdStr = stringifyUnknown(recurrenceId);
 					modifiedInstances.get(uid)!.set(recurrenceIdStr, event);
 				}
 			});
 
 			// Second pass: process events
 			vevents.forEach((vevent: ICAL.Component) => {
-				try {
-					const event = new ICAL.Event(vevent);
+					try {
+						const event = new ICAL.Event(vevent);
 
-					// Skip if this is a modified instance (will be handled as part of the recurring series)
-					const recurrenceId = (vevent as any).getFirstPropertyValue("recurrence-id");
+						// Skip if this is a modified instance (will be handled as part of the recurring series)
+						const recurrenceId = vevent.getFirstPropertyValue("recurrence-id");
 					if (recurrenceId) {
 						return;
 					}
 
-					// Skip cancelled events (STATUS:CANCELLED)
-					const status = (vevent as any).getFirstPropertyValue("status");
+						// Skip cancelled events (STATUS:CANCELLED)
+						const status = vevent.getFirstPropertyValue("status");
 					if (typeof status === "string" && status.toUpperCase() === "CANCELLED") {
 						return;
 					}
@@ -353,11 +430,11 @@ export class ICSSubscriptionService extends EventEmitter {
 					// entry carries their own PARTSTAT, so if any attendee is
 					// marked DECLINED the event was almost certainly declined
 					// by the calendar owner.
-					const attendees = (vevent as any).getAllProperties("attendee");
-					if (attendees && attendees.length > 0) {
-						const hasDeclined = attendees.some(
-							(a: any) => {
-								const partstat = a.getParameter("partstat");
+						const attendees = vevent.getAllProperties("attendee");
+						if (attendees && attendees.length > 0) {
+							const hasDeclined = attendees.some(
+								(a) => {
+									const partstat = a.getParameter("partstat");
 								return typeof partstat === "string" && partstat.toUpperCase() === "DECLINED";
 							}
 						);
@@ -403,8 +480,8 @@ export class ICSSubscriptionService extends EventEmitter {
 					if (event.isRecurring()) {
 						// Parse EXDATE (exception dates) - dates to exclude from the recurrence
 						const exdates = new Set<string>();
-						const exdateProp = (vevent as any).getAllProperties("exdate");
-						exdateProp.forEach((prop: any) => {
+							const exdateProp = vevent.getAllProperties("exdate");
+							exdateProp.forEach((prop) => {
 							const exdateValue = prop.getFirstValue();
 							if (exdateValue) {
 								// Handle both single dates and arrays of dates
@@ -425,13 +502,19 @@ export class ICSSubscriptionService extends EventEmitter {
 						// Generate instances for the next year
 						const iterator = event.iterator(startDate);
 						const maxDate = new ICAL.Time();
-						maxDate.fromJSDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)); // One year from now
+						maxDate.fromJSDate(new Date(Date.now() + ICS_RECURRENCE_EXPANSION_WINDOW_MS)); // One year from now
 
 						let occurrence;
-						let instanceCount = 0;
-						const maxInstances = 100; // Prevent infinite loops
+						let occurrenceCount = 0;
+						let visibleInstanceCount = 0;
 
-						while ((occurrence = iterator.next()) && instanceCount < maxInstances) {
+						while (
+							(occurrence = iterator.next()) &&
+							occurrenceCount < MAX_RECURRING_ICS_ITERATIONS &&
+							visibleInstanceCount < MAX_RECURRING_ICS_VISIBLE_INSTANCES
+						) {
+							occurrenceCount++;
+
 							if (occurrence.compare(maxDate) > 0) {
 								break;
 							}
@@ -440,9 +523,10 @@ export class ICSSubscriptionService extends EventEmitter {
 
 							// Skip if this date is in EXDATE
 							if (exdates.has(occurrenceStr)) {
-								instanceCount++;
 								continue;
 							}
+
+							const instanceId = `${eventId}-${visibleInstanceCount}`;
 
 							// Check if this instance has been modified
 							const modifiedEvent = modifiedForThisEvent.get(occurrenceStr);
@@ -453,7 +537,7 @@ export class ICSSubscriptionService extends EventEmitter {
 
 								if (modifiedStart) {
 									events.push({
-										id: `${eventId}-${instanceCount}`,
+										id: instanceId,
 										subscriptionId: subscriptionId,
 										title: modifiedEvent.summary || summary,
 										description: modifiedEvent.description || description,
@@ -465,6 +549,7 @@ export class ICSSubscriptionService extends EventEmitter {
 										location: modifiedEvent.location || location,
 										url: modifiedEvent.url || icsEvent.url,
 									});
+									visibleInstanceCount++;
 								}
 							} else {
 								// Use the original recurring event instance
@@ -480,13 +565,12 @@ export class ICSSubscriptionService extends EventEmitter {
 
 								events.push({
 									...icsEvent,
-									id: `${eventId}-${instanceCount}`,
+									id: instanceId,
 									start: instanceStart,
 									end: instanceEnd,
 								});
+								visibleInstanceCount++;
 							}
-
-							instanceCount++;
 						}
 					} else {
 						events.push(icsEvent);
@@ -519,7 +603,7 @@ export class ICSSubscriptionService extends EventEmitter {
 				// No cache exists - trigger immediate fetch
 				if (!this.pendingRefreshes.has(subscription.id)) {
 					this.pendingRefreshes.add(subscription.id);
-					this.fetchSubscription(subscription.id)
+					void this.fetchSubscription(subscription.id)
 						.finally(() => this.pendingRefreshes.delete(subscription.id));
 				}
 				return;
@@ -536,14 +620,14 @@ export class ICSSubscriptionService extends EventEmitter {
 				const isStale = now > expiryDate;
 				if (isStale && !this.pendingRefreshes.has(subscription.id)) {
 					this.pendingRefreshes.add(subscription.id);
-					this.fetchSubscription(subscription.id)
+					void this.fetchSubscription(subscription.id)
 						.finally(() => this.pendingRefreshes.delete(subscription.id));
 				}
 			} else {
 				// Cache is expired beyond grace period - trigger fetch
 				if (!this.pendingRefreshes.has(subscription.id)) {
 					this.pendingRefreshes.add(subscription.id);
-					this.fetchSubscription(subscription.id)
+					void this.fetchSubscription(subscription.id)
 						.finally(() => this.pendingRefreshes.delete(subscription.id));
 				}
 			}
@@ -559,7 +643,7 @@ export class ICSSubscriptionService extends EventEmitter {
 			const subscription = this.subscriptions.find(sub => sub.id === subscriptionId);
 			if (subscription && subscription.enabled && !this.pendingRefreshes.has(subscriptionId)) {
 				this.pendingRefreshes.add(subscriptionId);
-				this.fetchSubscription(subscriptionId)
+				void this.fetchSubscription(subscriptionId)
 					.finally(() => this.pendingRefreshes.delete(subscriptionId));
 			}
 			return [];
@@ -574,7 +658,7 @@ export class ICSSubscriptionService extends EventEmitter {
 			// Cache expired beyond grace period - trigger fetch
 			if (!this.pendingRefreshes.has(subscriptionId)) {
 				this.pendingRefreshes.add(subscriptionId);
-				this.fetchSubscription(subscriptionId)
+				void this.fetchSubscription(subscriptionId)
 					.finally(() => this.pendingRefreshes.delete(subscriptionId));
 			}
 			return [];
@@ -584,7 +668,7 @@ export class ICSSubscriptionService extends EventEmitter {
 		const isStale = now > expiryDate;
 		if (isStale && !this.pendingRefreshes.has(subscriptionId)) {
 			this.pendingRefreshes.add(subscriptionId);
-			this.fetchSubscription(subscriptionId)
+			void this.fetchSubscription(subscriptionId)
 				.finally(() => this.pendingRefreshes.delete(subscriptionId));
 		}
 
@@ -599,15 +683,66 @@ export class ICSSubscriptionService extends EventEmitter {
 		}
 	}
 
+	private getVaultBasePath(): string | undefined {
+		const adapter = this.plugin.app.vault.adapter as unknown as VaultAdapterWithBasePath;
+		if (typeof adapter?.getBasePath !== "function") {
+			return undefined;
+		}
+
+		try {
+			const basePath = adapter.getBasePath();
+			return typeof basePath === "string" && basePath.trim() ? basePath : undefined;
+		} catch (error) {
+			console.warn("Failed to resolve vault base path for local ICS file:", error);
+			return undefined;
+		}
+	}
+
+	private normalizePathSeparators(filePath: string): string {
+		return filePath.trim().replace(/\\/g, "/").replace(/^\.\/+/u, "");
+	}
+
+	private isAbsoluteFilePath(filePath: string): boolean {
+		return filePath.startsWith("/") || /^[A-Za-z]:\//u.test(filePath);
+	}
+
+	private normalizeLocalICSFilePath(filePath: string): string {
+		const normalizedPath = this.normalizePathSeparators(filePath);
+		if (!this.isAbsoluteFilePath(normalizedPath)) {
+			return normalizedPath;
+		}
+
+		const basePath = this.getVaultBasePath();
+		if (basePath) {
+			const normalizedBasePath = this.normalizePathSeparators(basePath).replace(/\/+$/u, "");
+			if (normalizedPath.startsWith(`${normalizedBasePath}/`)) {
+				return normalizedPath.slice(normalizedBasePath.length + 1);
+			}
+		}
+
+		throw new Error(
+			"Local ICS files must be inside the current Obsidian vault. Move the file into the vault or use a vault-relative path such as \"Calendar.ics\"."
+		);
+	}
+
+	private normalizeLocalICSFilePathIfPossible(filePath: string): string {
+		try {
+			return this.normalizeLocalICSFilePath(filePath);
+		} catch {
+			return this.normalizePathSeparators(filePath);
+		}
+	}
+
 	private async readLocalICSFile(filePath: string): Promise<string> {
 		try {
-			const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+			const normalizedFilePath = this.normalizeLocalICSFilePath(filePath);
+			const file = this.plugin.app.vault.getAbstractFileByPath(normalizedFilePath);
 			if (!file || !(file instanceof TFile)) {
-				throw new Error(`File not found: ${filePath}`);
+				throw new Error(`File not found: ${normalizedFilePath}`);
 			}
 
 			if (file.extension !== "ics") {
-				throw new Error(`File is not an ICS file: ${filePath}`);
+				throw new Error(`File is not an ICS file: ${normalizedFilePath}`);
 			}
 
 			return await this.plugin.app.vault.cachedRead(file);
@@ -624,13 +759,14 @@ export class ICSSubscriptionService extends EventEmitter {
 		}
 
 		this.stopFileWatcher(subscription.id);
+		const watchedPath = this.normalizeLocalICSFilePathIfPossible(subscription.filePath);
 
 		// Register file watcher with Obsidian's vault
 		const watcherCallback = (file: TFile, oldPath?: string) => {
-			if (file.path === subscription.filePath || oldPath === subscription.filePath) {
+			if (file.path === watchedPath || oldPath === watchedPath) {
 				// Debounce file changes to avoid excessive updates
-				setTimeout(() => {
-					this.fetchSubscription(subscription.id);
+				window.setTimeout(() => {
+					void this.fetchSubscription(subscription.id);
 				}, 1000);
 			}
 		};
@@ -639,7 +775,7 @@ export class ICSSubscriptionService extends EventEmitter {
 		const modifyRef = this.plugin.app.vault.on("modify", watcherCallback);
 		const renameRef = this.plugin.app.vault.on("rename", watcherCallback);
 		const deleteRef = this.plugin.app.vault.on("delete", (file) => {
-			if (file.path === subscription.filePath) {
+			if (file.path === watchedPath) {
 				this.lastError.set(subscription.id, "Local ICS file was deleted");
 			}
 		});
@@ -652,12 +788,7 @@ export class ICSSubscriptionService extends EventEmitter {
 		});
 
 		// Set up periodic refresh for local files (less frequent than remote)
-		const intervalMs = subscription.refreshInterval * 60 * 1000;
-		const timer = setInterval(() => {
-			this.fetchSubscription(subscription.id);
-		}, intervalMs);
-
-		this.refreshTimers.set(subscription.id, timer as unknown as number);
+		this.startFileRefreshTimer(subscription);
 	}
 
 	private stopFileWatcher(id: string): void {
@@ -674,19 +805,45 @@ export class ICSSubscriptionService extends EventEmitter {
 
 	private startRefreshTimer(subscription: ICSSubscription): void {
 		this.stopRefreshTimer(subscription.id);
+		this.startRemoteRefreshTimer(subscription);
+	}
 
+	private startFileRefreshTimer(subscription: ICSSubscription): void {
 		const intervalMs = subscription.refreshInterval * 60 * 1000; // Convert minutes to milliseconds
-		const timer = setInterval(() => {
-			this.fetchSubscription(subscription.id);
+		const timer = window.setTimeout(() => {
+			this.refreshTimers.delete(subscription.id);
+			void this.fetchSubscription(subscription.id).finally(() => {
+				if (this.shouldContinueRefresh(subscription.id)) {
+					this.startFileRefreshTimer(subscription);
+				}
+			});
 		}, intervalMs);
 
-		this.refreshTimers.set(subscription.id, timer as unknown as number);
+		this.refreshTimers.set(subscription.id, timer);
+	}
+
+	private startRemoteRefreshTimer(subscription: ICSSubscription): void {
+		const intervalMs = subscription.refreshInterval * 60 * 1000;
+		const timer = window.setTimeout(() => {
+			this.refreshTimers.delete(subscription.id);
+			void this.fetchSubscription(subscription.id).finally(() => {
+				if (this.shouldContinueRefresh(subscription.id)) {
+					this.startRemoteRefreshTimer(subscription);
+				}
+			});
+		}, intervalMs);
+
+		this.refreshTimers.set(subscription.id, timer);
+	}
+
+	private shouldContinueRefresh(id: string): boolean {
+		return !this.destroyed && this.subscriptions.some((item) => item.id === id && item.enabled);
 	}
 
 	private stopRefreshTimer(id: string): void {
 		const timer = this.refreshTimers.get(id);
 		if (timer) {
-			clearInterval(timer);
+			window.clearTimeout(timer);
 			this.refreshTimers.delete(id);
 		}
 	}
@@ -696,8 +853,9 @@ export class ICSSubscriptionService extends EventEmitter {
 	}
 
 	destroy(): void {
+		this.destroyed = true;
 		// Clear all timers
-		this.refreshTimers.forEach((timer) => clearInterval(timer));
+		this.refreshTimers.forEach((timer) => window.clearTimeout(timer));
 		this.refreshTimers.clear();
 
 		// Clear all file watchers

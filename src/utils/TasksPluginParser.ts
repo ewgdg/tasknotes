@@ -17,6 +17,7 @@ export interface ParsedTaskData {
 		days_of_week?: string[];
 		day_of_month?: number;
 		month_of_year?: number;
+		raw?: string;
 	};
 	timeEstimate?: number;
 	tags?: string[];
@@ -47,8 +48,8 @@ export class TasksPluginParser {
 		RECURRENCE: /🔁\s*([^📅⏳🛫➕✅⏫🔼⏬🔁#]+?)(?=\s*[📅⏳🛫➕✅⏫🔼⏬🔁#]|$)/gu,
 	};
 
-	// Tag pattern for hashtags (includes hyphens for tags like #my-tag)
-	private static readonly TAG_PATTERN = /#[\w/-]+/g;
+	// Tag pattern for hashtags, including Unicode letters/marks and hyphens.
+	private static readonly TAG_PATTERN = /#[\p{L}\p{N}\p{M}_/-]+/gu;
 
 	// Checkbox pattern for markdown tasks (supports both bullet points and numbered lists)
 	private static readonly CHECKBOX_PATTERN = /^(\s*(?:[-*+]|\d+\.)\s+\[)([ xX])(\]\s+)(.*)/;
@@ -283,7 +284,7 @@ export class TasksPluginParser {
 	 */
 	private static extractRecurrence(content: string): {
 		recurrence?: string;
-		recurrenceData?: any;
+		recurrenceData?: ParsedTaskData["recurrenceData"];
 	} {
 		// Create a fresh regex to avoid global state issues
 		const freshPattern = new RegExp(this.EMOJI_PATTERNS.RECURRENCE.source, "g");
@@ -359,7 +360,7 @@ export class TasksPluginParser {
 
 		try {
 			// Create a fresh regex to avoid global state issues
-			const freshPattern = new RegExp(this.TAG_PATTERN.source, "g");
+			const freshPattern = new RegExp(this.TAG_PATTERN.source, this.TAG_PATTERN.flags);
 			const tags: string[] = [];
 			let match;
 
@@ -405,7 +406,7 @@ export class TasksPluginParser {
 
 			// Remove tags using fresh regex instance
 			try {
-				const tagPattern = new RegExp(this.TAG_PATTERN.source, "g");
+				const tagPattern = new RegExp(this.TAG_PATTERN.source, this.TAG_PATTERN.flags);
 				cleanContent = cleanContent.replace(tagPattern, "");
 			} catch (error) {
 				console.debug("Error removing tags from title:", error);

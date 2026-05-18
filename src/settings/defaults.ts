@@ -58,6 +58,7 @@ export const DEFAULT_STATUSES: StatusConfig[] = [
 		label: "None",
 		color: "#cccccc",
 		isCompleted: false,
+		excludeFromCycle: false,
 		order: 0,
 		autoArchive: false,
 		autoArchiveDelay: 5,
@@ -68,6 +69,7 @@ export const DEFAULT_STATUSES: StatusConfig[] = [
 		label: "Open",
 		color: "#808080",
 		isCompleted: false,
+		excludeFromCycle: false,
 		order: 1,
 		autoArchive: false,
 		autoArchiveDelay: 5,
@@ -78,6 +80,7 @@ export const DEFAULT_STATUSES: StatusConfig[] = [
 		label: "In progress",
 		color: "#0066cc",
 		isCompleted: false,
+		excludeFromCycle: false,
 		order: 2,
 		autoArchive: false,
 		autoArchiveDelay: 5,
@@ -88,6 +91,7 @@ export const DEFAULT_STATUSES: StatusConfig[] = [
 		label: "Done",
 		color: "#00aa00",
 		isCompleted: true,
+		excludeFromCycle: false,
 		order: 3,
 		autoArchive: false,
 		autoArchiveDelay: 5,
@@ -195,6 +199,7 @@ export const DEFAULT_ICS_INTEGRATION_SETTINGS: ICSIntegrationSettings = {
 	autoExportPath: "tasknotes-calendar.ics",
 	autoExportInterval: 60, // 60 minutes by default
 	useDurationForExport: false, // Preserve existing behavior: use due date as DTEND
+	excludeCompletedFromExport: false, // Preserve existing behavior: include completed tasks
 	// Task creation defaults
 	useICSEndAsDue: false, // Preserve existing behavior: don't set due date from ICS events
 };
@@ -213,7 +218,7 @@ export const DEFAULT_GOOGLE_CALENDAR_EXPORT: GoogleCalendarExportSettings = {
 	createAsAllDay: true, // All-day events by default
 	defaultEventDuration: 60, // 1 hour if timed events
 	includeObsidianLink: true, // Include link back to Obsidian
-	defaultReminderMinutes: null, // No reminder by default (user opts in)
+	defaultReminderMinutes: null, // No reminder override by default (user opts in)
 };
 
 export const DEFAULT_PROJECT_AUTOSUGGEST: ProjectAutosuggestSettings = {
@@ -290,6 +295,7 @@ export const DEFAULT_SETTINGS: TaskNotesSettings = {
 	pomodoroSoundVolume: 50,
 	pomodoroStorageLocation: "plugin",
 	pomodoroMobileSidebar: "tab",
+	showPomodoroInStatusBar: true,
 	// Editor defaults
 	enableTaskLinkOverlay: true,
 	disableOverlayOnAlias: false,
@@ -384,12 +390,13 @@ export const DEFAULT_SETTINGS: TaskNotesSettings = {
 	autoCreateDefaultBasesFiles: true, // Auto-create missing default Base files on startup
 	// Command-to-file mappings for view commands (v4)
 	commandFileMapping: {
-		'open-calendar-view': 'TaskNotes/Views/mini-calendar-default.base',
-		'open-kanban-view': 'TaskNotes/Views/kanban-default.base',
-		'open-tasks-view': 'TaskNotes/Views/tasks-default.base',
-		'open-advanced-calendar-view': 'TaskNotes/Views/calendar-default.base',
-		'open-agenda-view': 'TaskNotes/Views/agenda-default.base',
-		'relationships': 'TaskNotes/Views/relationships.base',
+		"open-calendar-view": "TaskNotes/Views/mini-calendar-default.base",
+		"open-kanban-view": "TaskNotes/Views/kanban-default.base",
+		"open-tasks-view": "TaskNotes/Views/tasks-default.base",
+		"open-advanced-calendar-view": "TaskNotes/Views/calendar-default.base",
+		"open-agenda-view": "TaskNotes/Views/agenda-default.base",
+		"pomodoro-stats-base": "TaskNotes/Views/pomodoro-stats.base",
+		relationships: "TaskNotes/Views/relationships.base",
 	},
 	// Recurring task behavior defaults
 	maintainDueDateOffsetInRecurring: false,

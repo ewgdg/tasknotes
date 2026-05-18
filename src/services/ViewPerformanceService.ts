@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- Performance observers are checked for support before callbacks run. */
 import { EventRef } from "obsidian";
 import TaskNotesPlugin from "../main";
 import { TaskInfo, EVENT_TASK_UPDATED } from "../types";
@@ -36,7 +36,7 @@ export class ViewPerformanceService {
 
 	// Event coordination
 	private updateInProgress = new Set<string>();
-	private eventListener: EventRef | null = null;
+	private eventListener: unknown = null;
 
 	constructor(plugin: TaskNotesPlugin) {
 		this.plugin = plugin;
@@ -64,7 +64,7 @@ export class ViewPerformanceService {
 		// Clean up debounce timer
 		const timer = this.viewDebounceTimers.get(viewId);
 		if (timer) {
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 			this.viewDebounceTimers.delete(viewId);
 		}
 
@@ -148,12 +148,12 @@ export class ViewPerformanceService {
 		// Clear existing timer
 		const existingTimer = this.viewDebounceTimers.get(viewId);
 		if (existingTimer) {
-			clearTimeout(existingTimer);
+			window.clearTimeout(existingTimer);
 		}
 
 		// Schedule debounced update
-		const timer = window.setTimeout(async () => {
-			await this.processPendingUpdatesForView(viewId);
+		const timer = window.setTimeout(() => {
+			void this.processPendingUpdatesForView(viewId);
 		}, config.debounceDelay);
 
 		this.viewDebounceTimers.set(viewId, timer);
@@ -266,7 +266,6 @@ export class ViewPerformanceService {
 			const allTaskPaths = this.plugin.cacheManager.getAllTaskPaths();
 			const existingPaths = new Set(allTaskPaths);
 
-			// eslint-disable-next-line @typescript-eslint/no-unused-vars
 			for (const taskPath of this.globalTaskVersionCache.keys()) {
 				if (!existingPaths.has(taskPath)) {
 					this.globalTaskVersionCache.delete(taskPath);
@@ -299,7 +298,7 @@ export class ViewPerformanceService {
 	/**
 	 * Get performance statistics
 	 */
-	getStats(): Record<string, any> {
+	getStats(): Record<string, unknown> {
 		return {
 			registeredViews: Array.from(this.viewConfigs.keys()),
 			cacheSize: this.globalTaskVersionCache.size,
@@ -318,13 +317,13 @@ export class ViewPerformanceService {
 	destroy(): void {
 		// Clean up global event listener
 		if (this.eventListener) {
-			this.plugin.emitter.offref(this.eventListener);
+			this.plugin.emitter.offref(this.eventListener as EventRef);
 			this.eventListener = null;
 		}
 
 		// Clean up all timers
 		for (const timer of this.viewDebounceTimers.values()) {
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 		}
 
 		// Clear all state

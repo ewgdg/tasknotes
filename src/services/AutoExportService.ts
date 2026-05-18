@@ -1,20 +1,20 @@
-/* eslint-disable no-console */
 import { Notice } from "obsidian";
 import TaskNotesPlugin from "../main";
 import { CalendarExportService } from "./CalendarExportService";
-import { TranslationKey } from "../i18n";
+import type { InterpolationValues, TranslationKey } from "../i18n";
 
 export class AutoExportService {
 	private plugin: TaskNotesPlugin;
-	private intervalId: number | null = null;
+	private scheduledExportId: number | null = null;
 	private lastExportTime: Date | null = null;
 	private nextExportTime: Date | null = null;
+	private isRunning = false;
 
 	constructor(plugin: TaskNotesPlugin) {
 		this.plugin = plugin;
 	}
 
-	private translate(key: TranslationKey, variables?: Record<string, any>): string {
+	private translate(key: TranslationKey, variables?: InterpolationValues): string {
 		return this.plugin.i18n.translate(key, variables);
 	}
 
@@ -26,32 +26,22 @@ export class AutoExportService {
 			return;
 		}
 
-		this.stop(); // Stop any existing interval
+		this.stop();
+		this.isRunning = true;
 
-		const intervalMinutes = this.plugin.settings.icsIntegration.autoExportInterval;
-		const intervalMs = intervalMinutes * 60 * 1000;
-
-		// Set next export time
-		this.nextExportTime = new Date(Date.now() + intervalMs);
-
-		this.intervalId = setInterval(async () => {
-			await this.performExport();
-			// Update next export time
-			this.nextExportTime = new Date(Date.now() + intervalMs);
-		}, intervalMs) as unknown as number;
-
-		console.log(`TaskNotes: Auto export started (interval: ${intervalMinutes} minutes)`);
+		this.scheduleNextExport();
 	}
 
 	/**
 	 * Stop the automatic export service
 	 */
 	stop(): void {
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-			this.intervalId = null;
-			this.nextExportTime = null;
+		this.isRunning = false;
+		if (this.scheduledExportId !== null) {
+			window.clearTimeout(this.scheduledExportId);
+			this.scheduledExportId = null;
 		}
+		this.nextExportTime = null;
 	}
 
 	/**
@@ -84,6 +74,26 @@ export class AutoExportService {
 		return this.nextExportTime;
 	}
 
+	private scheduleNextExport(): void {
+		if (!this.isRunning || !this.plugin.settings.icsIntegration.enableAutoExport) {
+			this.nextExportTime = null;
+			return;
+		}
+
+		const intervalMinutes = this.plugin.settings.icsIntegration.autoExportInterval;
+		const intervalMs = intervalMinutes * 60 * 1000;
+		this.nextExportTime = new Date(Date.now() + intervalMs);
+
+		this.scheduledExportId = window.setTimeout(() => {
+			this.scheduledExportId = null;
+			void this.performExport().finally(() => {
+				if (this.isRunning) {
+					this.scheduleNextExport();
+				}
+			});
+		}, intervalMs);
+	}
+
 	/**
 	 * Perform the actual export
 	 */
@@ -96,15 +106,20 @@ export class AutoExportService {
 			const allTasks = await this.plugin.cacheManager.getAllTasks();
 
 			if (allTasks.length === 0) {
-				console.log("TaskNotes: Auto export skipped - no tasks found");
 				return;
 			}
 
 			// Generate ICS content with export options from settings
 			const exportOptions = {
 				useDurationForExport: this.plugin.settings.icsIntegration.useDurationForExport,
+				excludeCompleted:
+					this.plugin.settings.icsIntegration.excludeCompletedFromExport ?? false,
+				completedStatuses: this.plugin.statusManager.getCompletedStatuses(),
 			};
-			const icsContent = CalendarExportService.generateMultipleTasksICSContent(allTasks, exportOptions);
+			const icsContent = CalendarExportService.generateMultipleTasksICSContent(
+				allTasks,
+				exportOptions
+			);
 
 			// Write to file - use path as-is since Obsidian handles normalization
 			const normalizedPath = exportPath;
@@ -121,9 +136,6 @@ export class AutoExportService {
 			}
 
 			this.lastExportTime = new Date();
-			console.log(
-				`TaskNotes: Auto export completed - ${allTasks.length} tasks exported to ${exportPath}`
-			);
 		} catch (error) {
 			console.error("TaskNotes: Auto export failed:", error);
 

@@ -25,7 +25,7 @@ interface TimeTrackingSettingsSnapshot {
 export class SettingsLifecycleService {
 	private previousCacheSettings: CacheSettingsSnapshot | null = null;
 	private previousTimeTrackingSettings: TimeTrackingSettingsSnapshot | null = null;
-	private autoStopTimeTrackingListener: EventRef | null = null;
+	private autoStopTimeTrackingListener: unknown = null;
 
 	constructor(private plugin: TaskNotesPlugin) {}
 
@@ -36,7 +36,7 @@ export class SettingsLifecycleService {
 
 	setupTimeTrackingEventListeners(): void {
 		if (this.autoStopTimeTrackingListener) {
-			this.plugin.emitter.offref(this.autoStopTimeTrackingListener);
+			this.plugin.emitter.offref(this.autoStopTimeTrackingListener as EventRef);
 			this.autoStopTimeTrackingListener = null;
 		}
 
@@ -61,12 +61,17 @@ export class SettingsLifecycleService {
 
 		this.plugin.fieldMapper?.updateMapping(this.plugin.settings.fieldMapping);
 		this.plugin.fieldMapper?.updateUserFields(this.plugin.settings.userFields ?? []);
+		this.plugin.fieldMapper?.updateConfiguredValues(
+			this.plugin.settings.customStatuses,
+			this.plugin.settings.customPriorities
+		);
 		this.plugin.statusManager?.updateStatuses(this.plugin.settings.customStatuses);
 		this.plugin.priorityManager?.updatePriorities(this.plugin.settings.customPriorities);
 
 		if (cacheSettingsChanged) {
 			console.debug("Cache-related settings changed, updating cache configuration");
 			this.plugin.cacheManager.updateConfig(this.plugin.settings);
+			this.plugin.dependencyCache?.updateConfig(this.plugin.settings);
 			this.updatePreviousCacheSettings();
 		}
 
@@ -77,7 +82,7 @@ export class SettingsLifecycleService {
 		}
 
 		this.plugin.statusBarService?.updateVisibility();
-		this.plugin.mdbaseSpecService?.onSettingsChanged();
+		void this.plugin.mdbaseSpecService?.onSettingsChanged();
 		this.plugin.filterService?.refreshFilterOptions();
 		this.plugin.notifyDataChanged();
 		this.plugin.emitter.trigger("settings-changed", this.plugin.settings);
@@ -89,10 +94,15 @@ export class SettingsLifecycleService {
 
 		this.plugin.fieldMapper?.updateMapping(this.plugin.settings.fieldMapping);
 		this.plugin.fieldMapper?.updateUserFields(this.plugin.settings.userFields ?? []);
+		this.plugin.fieldMapper?.updateConfiguredValues(
+			this.plugin.settings.customStatuses,
+			this.plugin.settings.customPriorities
+		);
 		this.plugin.statusManager?.updateStatuses(this.plugin.settings.customStatuses);
 		this.plugin.priorityManager?.updatePriorities(this.plugin.settings.customPriorities);
 
 		this.plugin.cacheManager.updateConfig(this.plugin.settings);
+		this.plugin.dependencyCache?.updateConfig(this.plugin.settings);
 		this.updatePreviousCacheSettings();
 		this.setupTimeTrackingEventListeners();
 
@@ -106,7 +116,7 @@ export class SettingsLifecycleService {
 
 	destroy(): void {
 		if (this.autoStopTimeTrackingListener) {
-			this.plugin.emitter.offref(this.autoStopTimeTrackingListener);
+			this.plugin.emitter.offref(this.autoStopTimeTrackingListener as EventRef);
 			this.autoStopTimeTrackingListener = null;
 		}
 	}
@@ -146,7 +156,6 @@ export class SettingsLifecycleService {
 			if (this.plugin.settings.autoStopTimeTrackingNotification) {
 				new Notice(`Auto-stopped time tracking for: ${updatedTask.title}`);
 			}
-			console.log(`Auto-stopped time tracking for completed task: ${updatedTask.title}`);
 		} catch (error) {
 			console.error("Error auto-stopping time tracking:", error);
 		}

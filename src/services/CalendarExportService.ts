@@ -11,9 +11,11 @@ export interface CalendarURLOptions {
 
 export interface ICSExportOptions {
 	useDurationForExport?: boolean; // Use timeEstimate (duration) instead of due date for DTEND
+	excludeCompleted?: boolean; // Exclude completed tasks from multi-task exports
+	completedStatuses?: string[]; // Status values considered completed when excludeCompleted is enabled
 }
 
-type TranslateFn = (key: TranslationKey, variables?: Record<string, any>) => string;
+type TranslateFn = (key: TranslationKey, variables?: Record<string, unknown>) => string;
 
 interface ICSDateProperties {
 	startLine: string | null;
@@ -37,7 +39,7 @@ export class CalendarExportService {
 			case "ics":
 				return this.generateICSDownloadURL(task);
 			default:
-				throw new Error(`Unsupported calendar type: ${type}`);
+				throw new Error("Unsupported calendar type");
 		}
 	}
 
@@ -328,14 +330,19 @@ export class CalendarExportService {
 			try {
 				const scheduledDate = this.parseTaskDate(task.scheduled);
 				startISO = scheduledDate.toISOString();
-			} catch (e) {
+			} catch {
 				console.warn("Invalid scheduled date:", task.scheduled);
 			}
 		}
 
 		// When useDurationForExport is enabled, use timeEstimate to calculate end time
 		// instead of using due date
-		if (options?.useDurationForExport && startISO && task.timeEstimate && task.timeEstimate > 0) {
+		if (
+			options?.useDurationForExport &&
+			startISO &&
+			task.timeEstimate &&
+			task.timeEstimate > 0
+		) {
 			// Use scheduled + timeEstimate (in minutes) as end time
 			const start = new Date(startISO);
 			const end = new Date(start.getTime() + task.timeEstimate * 60 * 1000);
@@ -344,7 +351,7 @@ export class CalendarExportService {
 			try {
 				const dueDate = this.parseTaskDate(task.due);
 				endISO = dueDate.toISOString();
-			} catch (e) {
+			} catch {
 				console.warn("Invalid due date:", task.due);
 			}
 		} else if (useScheduledAsDue && startISO) {
@@ -409,7 +416,8 @@ export class CalendarExportService {
 	): ICSDateProperties {
 		if (task.scheduled && !this.hasTimeComponent(task.scheduled)) {
 			const startDate = task.scheduled;
-			const endDateExclusive = this.getAllDayEndDate(task, useScheduledAsDue, options) || startDate;
+			const endDateExclusive =
+				this.getAllDayEndDate(task, useScheduledAsDue, options) || startDate;
 
 			return {
 				startLine: `DTSTART;VALUE=DATE:${this.formatDateOnlyToICS(startDate)}`,
@@ -440,12 +448,12 @@ export class CalendarExportService {
 	 */
 	private static parseICSDate(icsDate: string): Date {
 		// YYYYMMDDTHHMMSSZ -> YYYY-MM-DDTHH:MM:SSZ
-		const year = icsDate.substr(0, 4);
-		const month = icsDate.substr(4, 2);
-		const day = icsDate.substr(6, 2);
-		const hour = icsDate.substr(9, 2);
-		const minute = icsDate.substr(11, 2);
-		const second = icsDate.substr(13, 2);
+		const year = icsDate.slice(0, 4);
+		const month = icsDate.slice(4, 6);
+		const day = icsDate.slice(6, 8);
+		const hour = icsDate.slice(9, 11);
+		const minute = icsDate.slice(11, 13);
+		const second = icsDate.slice(13, 15);
 
 		return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
 	}
@@ -454,22 +462,23 @@ export class CalendarExportService {
 	 * Parse task date string to Date object
 	 */
 	private static parseTaskDate(dateStr: string): Date {
+		const normalizedDate = dateStr.trim().replace(" ", "T");
 		// Handle different date formats
-		if (dateStr.includes("T")) {
+		if (this.hasTimeComponent(normalizedDate)) {
 			// ISO format or local datetime
-			return parseISO(dateStr);
+			return parseISO(normalizedDate);
 		} else {
 			// Date only - assume start of day
-			return parseISO(`${dateStr}T00:00:00`);
+			return parseISO(`${normalizedDate}T00:00:00`);
 		}
 	}
 
 	private static hasTimeComponent(dateStr: string): boolean {
-		return dateStr.includes("T");
+		return /\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(dateStr);
 	}
 
 	private static formatDateOnlyToICS(dateStr: string): string {
-		return dateStr.split("T")[0].replace(/-/g, "");
+		return dateStr.split(/[T\s]/)[0].replace(/-/g, "");
 	}
 
 	private static getAllDayEndDate(
@@ -496,7 +505,7 @@ export class CalendarExportService {
 	}
 
 	private static addDaysToDateString(dateStr: string, days: number): string {
-		const baseDate = parseISO(`${dateStr.split("T")[0]}T00:00:00`);
+		const baseDate = parseISO(`${dateStr.split(/[T\s]/)[0]}T00:00:00`);
 		baseDate.setDate(baseDate.getDate() + days);
 		return format(baseDate, "yyyy-MM-dd");
 	}
@@ -547,6 +556,7 @@ export class CalendarExportService {
 			.toISOString()
 			.replace(/[-:]/g, "")
 			.replace(/\.\d{3}/, "");
+		const exportTasks = this.filterTasksForExport(tasks, options);
 
 		const lines = [
 			"BEGIN:VCALENDAR",
@@ -556,7 +566,7 @@ export class CalendarExportService {
 		];
 
 		// Add each task as a VEVENT
-		tasks.forEach((task, index) => {
+		exportTasks.forEach((task, index) => {
 			const uid = `${task.path.replace(/[^a-zA-Z0-9]/g, "-")}-${index}-${Date.now()}@tasknotes`;
 
 			lines.push("BEGIN:VEVENT");
@@ -656,10 +666,23 @@ export class CalendarExportService {
 		return this.foldICSLines(lines.join("\r\n"));
 	}
 
+	private static filterTasksForExport(tasks: TaskInfo[], options?: ICSExportOptions): TaskInfo[] {
+		if (!options?.excludeCompleted) {
+			return tasks;
+		}
+
+		const completedStatuses = new Set(options.completedStatuses?.length ? options.completedStatuses : ["done"]);
+		return tasks.filter((task) => !completedStatuses.has(task.status));
+	}
+
 	/**
 	 * Download ICS file for all tasks
 	 */
-	static downloadAllTasksICSFile(tasks: TaskInfo[], translate?: TranslateFn, options?: ICSExportOptions): void {
+	static downloadAllTasksICSFile(
+		tasks: TaskInfo[],
+		translate?: TranslateFn,
+		options?: ICSExportOptions
+	): void {
 		try {
 			if (!tasks || tasks.length === 0) {
 				new Notice(
@@ -677,7 +700,7 @@ export class CalendarExportService {
 			const date = new Date().toISOString().split("T")[0];
 			const filename = `tasknotes-all-tasks-${date}.ics`;
 
-			const a = document.createElement("a");
+			const a = activeDocument.createElement("a");
 			a.href = url;
 			a.download = filename;
 			a.click();
@@ -707,7 +730,11 @@ export class CalendarExportService {
 	/**
 	 * Download ICS file for a task
 	 */
-	static downloadICSFile(task: TaskInfo, translate?: TranslateFn, options?: ICSExportOptions): void {
+	static downloadICSFile(
+		task: TaskInfo,
+		translate?: TranslateFn,
+		options?: ICSExportOptions
+	): void {
 		try {
 			const icsContent = this.generateICSContent(task, options);
 			const blob = new Blob([icsContent], { type: "text/calendar" });
@@ -715,7 +742,7 @@ export class CalendarExportService {
 
 			const filename = `${task.title.replace(/[^a-zA-Z0-9]/g, "-")}.ics`;
 
-			const a = document.createElement("a");
+			const a = activeDocument.createElement("a");
 			a.href = url;
 			a.download = filename;
 			a.click();

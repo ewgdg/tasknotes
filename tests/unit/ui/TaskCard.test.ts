@@ -48,7 +48,11 @@ jest.mock('../../../src/utils/helpers', () => ({
   shouldUseRecurringTaskUI: jest.fn((task) => !!task.recurrence),
   getRecurringTaskCompletionText: jest.fn(() => 'Not completed for this date'),
   getRecurrenceDisplayText: jest.fn((recurrence) => 'Daily'),
-  filterEmptyProjects: jest.fn((projects) => projects?.filter(p => p && p.trim()) || [])
+  filterEmptyProjects: jest.fn((projects) => projects?.filter(p => p && p.trim()) || []),
+  sanitizeForCssClass: jest.fn((value) => {
+    if (!value || typeof value !== 'string') return '';
+    return value.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+  })
 }));
 
 jest.mock('../../../src/utils/dateUtils', () => ({
@@ -257,6 +261,21 @@ describe('TaskCard Component', () => {
       expect(card.dataset.status).toBe('open');
     });
 
+    it('should sanitize status and priority class modifiers with spaces', () => {
+      const task = TaskFactory.createTask({
+        title: 'Test Task',
+        status: '60-In Progress',
+        priority: 'High Priority'
+      });
+
+      const card = createTaskCard(task, mockPlugin);
+
+      expect(card.classList.contains('task-card--status-60-in-progress')).toBe(true);
+      expect(card.classList.contains('task-card--priority-high-priority')).toBe(true);
+      expect(card.classList.contains('Progress')).toBe(false);
+      expect(card.classList.contains('Priority')).toBe(false);
+    });
+
     it('should create task card with all default options', () => {
       const task = TaskFactory.createTask();
       const card = createTaskCard(task, mockPlugin);
@@ -270,6 +289,24 @@ describe('TaskCard Component', () => {
       // Should have title
       const titleEl = card.querySelector('.task-card__title');
       expect(titleEl?.textContent).toBe(task.title);
+    });
+
+    it('should render wikilinks in task titles as clickable internal links (#1733)', () => {
+      const linkedFile = new TFile('Lidl.md');
+      mockPlugin.app.metadataCache.getFirstLinkpathDest.mockReturnValue(linkedFile);
+      const task = TaskFactory.createTask({
+        title: 'Buy milk from [[Lidl]]',
+        path: 'Tasks/buy-milk-from-lidl.md'
+      });
+
+      const card = createTaskCard(task, mockPlugin);
+
+      const titleText = card.querySelector('.task-card__title-text');
+      const link = titleText?.querySelector('a.internal-link') as HTMLAnchorElement | null;
+      expect(titleText?.textContent).toBe('Buy milk from Lidl');
+      expect(link).toBeTruthy();
+      expect(link?.textContent).toBe('Lidl');
+      expect(link?.getAttribute('data-href')).toBe('Lidl');
     });
 
     it.skip('should create task card with checkbox when enabled', () => {
@@ -290,6 +327,30 @@ describe('TaskCard Component', () => {
 
       expect(card.classList.contains('task-card--recurring')).toBe(true);
       expect(card.querySelector('.task-card__recurring-indicator')).toBeTruthy();
+    });
+
+    it('should indicate when a task has note body details', () => {
+      const task = TaskFactory.createTask({
+        details: 'Bring the reusable bags.'
+      });
+
+      const card = createTaskCard(task, mockPlugin);
+
+      expect(card.classList.contains('task-card--has-details')).toBe(true);
+      expect(card.dataset.hasDetails).toBe('true');
+      expect(card.querySelector('.task-card__details-indicator')).toBeTruthy();
+    });
+
+    it('should not indicate whitespace-only task details', () => {
+      const task = TaskFactory.createTask({
+        details: '   \n\t'
+      });
+
+      const card = createTaskCard(task, mockPlugin);
+
+      expect(card.classList.contains('task-card--has-details')).toBe(false);
+      expect(card.dataset.hasDetails).toBe('false');
+      expect(card.querySelector('.task-card__details-indicator')).toBeNull();
     });
 
     it('should create completed task card', () => {
@@ -362,6 +423,23 @@ describe('TaskCard Component', () => {
       const priorityDot = card.querySelector('.task-card__priority-dot') as HTMLElement;
       expect(priorityDot).toBeTruthy();
       expect(priorityDot.style.borderColor).toBe('rgb(255, 0, 0)');
+      expect(priorityDot.getAttribute('aria-label')).toBe('Priority: high');
+    });
+
+    it('should render configured priority icons instead of a plain dot', () => {
+      (mockPlugin.priorityManager.getPriorityConfig as jest.Mock).mockImplementation((priority) => ({
+        value: priority,
+        label: priority,
+        color: '#ff0000',
+        icon: priority === 'high' ? 'alert-circle' : undefined
+      }));
+      const task = TaskFactory.createTask({ priority: 'high' });
+      const card = createTaskCard(task, mockPlugin);
+
+      const priorityDot = card.querySelector('.task-card__priority-dot') as HTMLElement;
+      expect(priorityDot).toBeTruthy();
+      expect(priorityDot.classList.contains('task-card__priority-dot--icon')).toBe(true);
+      expect(priorityDot.getAttribute('data-icon')).toBe('alert-circle');
       expect(priorityDot.getAttribute('aria-label')).toBe('Priority: high');
     });
 
@@ -711,6 +789,22 @@ describe('TaskCard Component', () => {
       expect(titleEl?.classList.contains('completed')).toBe(true);
     });
 
+    it('should sanitize status and priority class modifiers when updating a card', () => {
+      const updatedTask = TaskFactory.createTask({
+        ...task,
+        title: 'Updated Task',
+        status: 'In Progress',
+        priority: 'High Priority'
+      });
+
+      updateTaskCard(card, updatedTask, mockPlugin);
+
+      expect(card.classList.contains('task-card--status-in-progress')).toBe(true);
+      expect(card.classList.contains('task-card--priority-high-priority')).toBe(true);
+      expect(card.classList.contains('Progress')).toBe(false);
+      expect(card.classList.contains('Priority')).toBe(false);
+    });
+
     it.skip('should update checkbox state', () => {
       const updatedTask = TaskFactory.createTask({
         ...task,
@@ -746,6 +840,55 @@ describe('TaskCard Component', () => {
       expect(priorityDot).toBeTruthy();
     });
 
+    it('should update a priority indicator when the configured icon changes', () => {
+      const taskWithPriority = TaskFactory.createTask({
+        ...task,
+        priority: 'high'
+      });
+      const cardWithPriority = createTaskCard(taskWithPriority, mockPlugin);
+
+      expect(cardWithPriority.querySelector('.task-card__priority-dot--icon')).toBeNull();
+
+      (mockPlugin.priorityManager.getPriorityConfig as jest.Mock).mockImplementation((priority) => ({
+        value: priority,
+        label: priority,
+        color: '#ff0000',
+        icon: 'alert-circle'
+      }));
+
+      updateTaskCard(cardWithPriority, taskWithPriority, mockPlugin);
+
+      const priorityDot = cardWithPriority.querySelector('.task-card__priority-dot') as HTMLElement;
+      expect(priorityDot.classList.contains('task-card__priority-dot--icon')).toBe(true);
+      expect(priorityDot.getAttribute('data-icon')).toBe('alert-circle');
+    });
+
+    it('should return a priority icon indicator to a plain dot when the icon is cleared', () => {
+      (mockPlugin.priorityManager.getPriorityConfig as jest.Mock).mockImplementation((priority) => ({
+        value: priority,
+        label: priority,
+        color: '#ff0000',
+        icon: 'alert-circle'
+      }));
+      const taskWithPriority = TaskFactory.createTask({
+        ...task,
+        priority: 'high'
+      });
+      const cardWithPriority = createTaskCard(taskWithPriority, mockPlugin);
+
+      (mockPlugin.priorityManager.getPriorityConfig as jest.Mock).mockImplementation((priority) => ({
+        value: priority,
+        label: priority,
+        color: '#ff0000'
+      }));
+
+      updateTaskCard(cardWithPriority, taskWithPriority, mockPlugin);
+
+      const priorityDot = cardWithPriority.querySelector('.task-card__priority-dot') as HTMLElement;
+      expect(priorityDot.classList.contains('task-card__priority-dot--icon')).toBe(false);
+      expect(priorityDot.getAttribute('data-icon')).toBeNull();
+    });
+
     it('should remove priority indicator when task loses priority', () => {
       // Start with priority
       const taskWithPriority = TaskFactory.createTask({
@@ -764,6 +907,43 @@ describe('TaskCard Component', () => {
       updateTaskCard(cardWithPriority, updatedTask, mockPlugin);
 
       expect(cardWithPriority.querySelector('.task-card__priority-dot')).toBeNull();
+    });
+
+    it('should add details indicator when task gains note body details', () => {
+      expect(card.classList.contains('task-card--has-details')).toBe(false);
+      expect(card.querySelector('.task-card__details-indicator')).toBeNull();
+
+      const updatedTask = TaskFactory.createTask({
+        ...task,
+        details: 'Follow up with Alice.'
+      });
+
+      updateTaskCard(card, updatedTask, mockPlugin);
+
+      expect(card.classList.contains('task-card--has-details')).toBe(true);
+      expect(card.dataset.hasDetails).toBe('true');
+      expect(card.querySelector('.task-card__details-indicator')).toBeTruthy();
+    });
+
+    it('should remove details indicator when task loses note body details', () => {
+      const taskWithDetails = TaskFactory.createTask({
+        ...task,
+        details: 'Follow up with Alice.'
+      });
+      const cardWithDetails = createTaskCard(taskWithDetails, mockPlugin);
+
+      expect(cardWithDetails.querySelector('.task-card__details-indicator')).toBeTruthy();
+
+      const updatedTask = TaskFactory.createTask({
+        ...taskWithDetails,
+        details: ''
+      });
+
+      updateTaskCard(cardWithDetails, updatedTask, mockPlugin);
+
+      expect(cardWithDetails.classList.contains('task-card--has-details')).toBe(false);
+      expect(cardWithDetails.dataset.hasDetails).toBe('false');
+      expect(cardWithDetails.querySelector('.task-card__details-indicator')).toBeNull();
     });
 
     it('should update status dot color', () => {

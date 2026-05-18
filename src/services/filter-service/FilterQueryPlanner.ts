@@ -1,5 +1,6 @@
 import { TaskManager } from "../../utils/TaskManager";
 import { FilterCondition, FilterQuery } from "../../types";
+import { stringifyUnknown } from "../../utils/stringUtils";
 
 export interface FilterQueryPlannerDependencies {
 	cacheManager: TaskManager;
@@ -7,7 +8,7 @@ export interface FilterQueryPlannerDependencies {
 
 export class FilterQueryPlanner {
 	private readonly indexQueryCache = new Map<string, Set<string>>();
-	private readonly cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly cacheTimers = new Map<string, number>();
 	private readonly cacheTimeout = 30000;
 
 	constructor(private deps: FilterQueryPlannerDependencies) {}
@@ -39,7 +40,7 @@ export class FilterQueryPlanner {
 
 	clearIndexQueryCache(): void {
 		for (const timer of this.cacheTimers.values()) {
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 		}
 		this.indexQueryCache.clear();
 		this.cacheTimers.clear();
@@ -199,10 +200,10 @@ export class FilterQueryPlanner {
 
 		const existingTimer = this.cacheTimers.get(cacheKey);
 		if (existingTimer) {
-			clearTimeout(existingTimer);
+			window.clearTimeout(existingTimer);
 		}
 
-		const timer = setTimeout(() => {
+		const timer = window.setTimeout(() => {
 			this.indexQueryCache.delete(cacheKey);
 			this.cacheTimers.delete(cacheKey);
 		}, this.cacheTimeout);
@@ -213,7 +214,7 @@ export class FilterQueryPlanner {
 
 	private getPathsForIndexableCondition(condition: FilterCondition): Set<string> {
 		const { property, operator, value } = condition;
-		const cacheKey = `${property}:${operator}:${value}`;
+		const cacheKey = `${property}:${operator}:${stringifyUnknown(value)}`;
 
 		return this.getCachedIndexResult(cacheKey, () => {
 			if (property === "status" && operator === "is" && value && typeof value === "string") {

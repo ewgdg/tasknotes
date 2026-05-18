@@ -12,7 +12,7 @@ export class PriorityContextMenu {
 	private menu: ContextMenu;
 	private options: PriorityContextMenuOptions;
 	private sortedPriorities: PriorityConfig[];
-	private targetDoc: Document = document;
+	private targetDoc: Document = activeDocument;
 
 	constructor(options: PriorityContextMenuOptions) {
 		this.menu = new ContextMenu();
@@ -56,7 +56,7 @@ export class PriorityContextMenu {
 		this.menu.show(event);
 
 		// Apply color styling after menu is shown
-		setTimeout(() => {
+		window.setTimeout(() => {
 			this.applyColorStyling();
 		}, 10);
 	}
@@ -70,7 +70,7 @@ export class PriorityContextMenu {
 		});
 
 		// Apply color styling after menu is shown
-		setTimeout(() => {
+		window.setTimeout(() => {
 			this.applyColorStyling();
 		}, 10);
 	}

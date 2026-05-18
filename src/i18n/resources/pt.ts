@@ -1072,6 +1072,7 @@ export const pt: TranslationTree = {
 					color: "Cor:",
 					icon: "Ícone:",
 					completed: "Concluído:",
+					excludeFromCycle: "Ignorar no ciclo:",
 					autoArchive: "Arquivar auto.:",
 					delayMinutes: "Atraso (minutos):"
 				},
@@ -1095,6 +1096,7 @@ export const pt: TranslationTree = {
 						'Valor: O identificador interno armazenado em seus arquivos de tarefa. Use prefixos como "1-urgente", "2-alta" para controlar a ordem de classificação nas visualizações de Bases.',
 					label: 'Rótulo de Exibição: O nome de exibição mostrado na interface (ex: "Prioridade Alta")',
 					color: "Cor: Cor do indicador visual para o ponto de prioridade e emblemas",
+					icon: "Ícone: Ícone Lucide opcional para mostrar nos cartões de tarefa no lugar do ponto de prioridade",
 					weight: "Peso: Valor numérico para classificação (pesos maiores aparecem primeiro nas listas)",
 					weightNote: "As tarefas são automaticamente classificadas pelo peso da prioridade em ordem decrescente (maior peso primeiro). Os pesos podem ser qualquer número positivo."
 				},
@@ -1111,11 +1113,13 @@ export const pt: TranslationTree = {
 					value: "Valor:",
 					label: "Rótulo:",
 					color: "Cor:",
+					icon: "Ícone:",
 					weight: "Peso:"
 				},
 				placeholders: {
 					value: "alta",
-					label: "Prioridade Alta"
+					label: "Prioridade Alta",
+					icon: "alert-circle"
 				},
 				weightLabel: "Peso: {weight}",
 				deleteConfirm: "Você deve ter pelo menos uma prioridade",
@@ -2011,8 +2015,8 @@ export const pt: TranslationTree = {
 						headersSection: "Configuração de Cabeçalhos",
 						transformFile: {
 							name: "Arquivo de Transformação",
-							description: "Caminho para um arquivo .js ou .json em seu cofre que transforma payloads de webhook",
-							placeholder: "discord-transform.js"
+							description: "Caminho para um arquivo de modelo .json em seu cofre que transforma payloads de webhook",
+							placeholder: "simple-template.json"
 						},
 						customHeaders: {
 							name: "Incluir cabeçalhos personalizados",
@@ -2038,24 +2042,24 @@ export const pt: TranslationTree = {
 						},
 						transformFile: {
 							name: "Arquivo de Transformação",
-							description: "Caminho para um arquivo .js ou .json em seu cofre que transforma payloads de webhook",
-							placeholder: "discord-transform.js"
+							description: "Caminho para um arquivo de modelo .json em seu cofre que transforma payloads de webhook",
+							placeholder: "simple-template.json"
 						},
 						customHeaders: {
 							name: "Incluir cabeçalhos personalizados",
 							description: "Incluir cabeçalhos do TaskNotes (tipo de evento, assinatura, ID de entrega). Desative para Discord, Slack e outros serviços com políticas CORS rígidas.",
 						},
 						transformHelp: {
-							title: "Arquivos de transformação permitem personalizar payloads de webhook:",
-							jsFiles: "Arquivos .js:",
-							jsDescription: " Transformações JavaScript personalizadas",
+							title: "Modelos de transformação JSON permitem personalizar payloads de webhook:",
+							jsFiles: "",
+							jsDescription: "",
 							jsonFiles: "Arquivos .json:",
 							jsonDescription: " Modelos com ",
 							jsonVariable: "${data.task.title}",
 							leaveEmpty: "Deixe em branco:",
 							leaveEmptyDescription: " Enviar dados brutos",
 							example: "Exemplo:",
-							exampleFile: "discord-transform.js"
+							exampleFile: "simple-template.json"
 						},
 						buttons: {
 							cancel: "Cancelar",
@@ -2148,6 +2152,7 @@ export const pt: TranslationTree = {
 		startTimeTrackingWithSelector: "Iniciar registro de tempo (selecionar tarefa)",
 		editTimeEntries: "Editar registros de tempo (selecionar tarefa)",
 		createOrOpenTask: "Criar ou abrir tarefa",
+		rolloverOverdueScheduledTasks: "Adiar tarefas agendadas vencidas para hoje",
 		syncAllTasksGoogleCalendar: "Sincronizar todas as tarefas para o Google Agenda",
 		syncCurrentTaskGoogleCalendar: "Sincronizar tarefa atual para o Google Agenda"
 	},
@@ -2655,6 +2660,7 @@ export const pt: TranslationTree = {
 			unarchive: "Desarquivar",
 			openNote: "Abrir nota",
 			copyTitle: "Copiar título da tarefa",
+			quickActions: "Ações rápidas",
 			noteActions: "Ações da nota",
 			rename: "Renomear",
 			renameTitle: "Renomear Arquivo",

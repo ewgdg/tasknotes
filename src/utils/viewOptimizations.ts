@@ -1,5 +1,3 @@
-/* eslint-disable no-console */
-import { ItemView } from "obsidian";
 import {
 	ViewPerformanceService,
 	ViewPerformanceConfig,
@@ -15,6 +13,7 @@ export interface OptimizedView {
 	plugin: TaskNotesPlugin;
 	viewPerformanceService?: ViewPerformanceService;
 	performanceConfig?: ViewPerformanceConfig;
+	getViewType(): string;
 
 	// Methods that implementing views should provide
 	updateForTask(taskPath: string, operation: "update" | "delete" | "create"): Promise<void>;
@@ -26,7 +25,7 @@ export interface OptimizedView {
  * Initialize performance optimizations for a view
  */
 export function initializeViewPerformance(
-	view: OptimizedView & ItemView,
+	view: OptimizedView,
 	config: Partial<ViewPerformanceConfig>
 ): void {
 	const fullConfig: ViewPerformanceConfig = {
@@ -58,7 +57,7 @@ export function initializeViewPerformance(
 /**
  * Cleanup performance optimizations when view is closed
  */
-export function cleanupViewPerformance(view: OptimizedView & ItemView): void {
+export function cleanupViewPerformance(view: OptimizedView): void {
 	if (view.viewPerformanceService && view.performanceConfig) {
 		view.viewPerformanceService.unregisterView(view.performanceConfig.viewId);
 	}
@@ -113,19 +112,20 @@ export function shouldRefreshForPropertyBasedView(
  * This can be used by TaskListView, KanbanView, etc.
  */
 export async function selectiveUpdateForListView(
-	view: ItemView & {
+	view: {
 		taskElements?: Map<string, HTMLElement>;
 		plugin: TaskNotesPlugin;
 		getCurrentVisibleProperties?: () => string[];
 		getVisibleProperties?: () => string[];
 		getVisiblePropertyLabels?: () => Record<string, string>;
+		refresh?: () => void | Promise<void>;
 	},
 	taskPath: string,
 	operation: "update" | "delete" | "create"
 ): Promise<void> {
 	if (!view.taskElements) {
 		// Fallback to full refresh if view doesn't have taskElements tracking
-		await (view as any).refresh?.();
+		await view.refresh?.();
 		return;
 	}
 
@@ -138,8 +138,7 @@ export async function selectiveUpdateForListView(
 				const updatedTask = await view.plugin.cacheManager.getTaskInfo(taskPath);
 				if (updatedTask) {
 					// Get visible properties from the view instead of extracting from DOM
-					const visibleProperties =
-						view.getCurrentVisibleProperties?.() ||
+					const visibleProperties = view.getCurrentVisibleProperties?.() ||
 						view.getVisibleProperties?.() || [
 							"due",
 							"scheduled",
@@ -171,10 +170,10 @@ export async function selectiveUpdateForListView(
 			}
 			break;
 
-		case "create":
-			// For new tasks, we generally need to check if they should be visible
-			// This is view-specific, so fallback to refresh for now
-			await (view as any).refresh?.();
+			case "create":
+				// For new tasks, we generally need to check if they should be visible
+				// This is view-specific, so fallback to refresh for now
+				await view.refresh?.();
 			break;
 	}
 }
@@ -206,7 +205,6 @@ async function updateTaskElementInPlace(
 	}
 }
 
-
 /**
  * Performance monitoring utility for debugging
  */
@@ -223,10 +221,6 @@ export class ViewPerformanceMonitor {
 
 		const elapsed = performance.now() - startTime;
 		this.startTimes.delete(operation);
-
-		if (elapsed > logThreshold) {
-			console.log(`[Performance] ${operation} took ${elapsed.toFixed(2)}ms`);
-		}
 
 		return elapsed;
 	}

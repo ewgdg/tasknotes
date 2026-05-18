@@ -1,7 +1,13 @@
-import { Editor, MarkdownView, Notice, Platform, addIcon } from "obsidian";
+import { MarkdownView, Notice, Platform, addIcon } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import type TaskNotesPlugin from "../main";
-import { EVENT_DATA_CHANGED, EVENT_TASK_UPDATED, POMODORO_STATS_VIEW_TYPE, POMODORO_VIEW_TYPE, STATS_VIEW_TYPE, TaskInfo } from "../types";
+import {
+	EVENT_TASK_UPDATED,
+	POMODORO_STATS_VIEW_TYPE,
+	POMODORO_VIEW_TYPE,
+	STATS_VIEW_TYPE,
+	TaskInfo,
+} from "../types";
 import { RequestDeduplicator, PredictivePrefetcher } from "../utils/RequestDeduplicator";
 import { DOMReconciler, UIStateManager } from "../utils/DOMReconciler";
 import { FieldMapper } from "../services/FieldMapper";
@@ -46,6 +52,18 @@ import { AutoExportService } from "../services/AutoExportService";
 
 type FileDeletedEventData = { path: string; prevCache?: unknown };
 
+type EditorWithCodeMirror = {
+	cm?: unknown;
+};
+
+function getCodeMirrorEditor(editor: unknown): unknown {
+	if (!editor || typeof editor !== "object") {
+		return undefined;
+	}
+
+	return (editor as unknown as EditorWithCodeMirror).cm ?? null;
+}
+
 export function registerTaskNotesIcon(): void {
 	addIcon(
 		"tasknotes-simple",
@@ -63,7 +81,12 @@ export function registerTaskNotesIcon(): void {
 }
 
 export async function initializeCoreServices(plugin: TaskNotesPlugin): Promise<void> {
-	plugin.fieldMapper = new FieldMapper(plugin.settings.fieldMapping, plugin.settings.userFields ?? []);
+	plugin.fieldMapper = new FieldMapper(
+		plugin.settings.fieldMapping,
+		plugin.settings.userFields ?? [],
+		plugin.settings.customStatuses,
+		plugin.settings.customPriorities
+	);
 	plugin.statusManager = new StatusManager(
 		plugin.settings.customStatuses,
 		plugin.settings.defaultTaskStatus
@@ -119,25 +142,41 @@ export async function initializeCoreServices(plugin: TaskNotesPlugin): Promise<v
 }
 
 export function registerRibbonIcons(plugin: TaskNotesPlugin): void {
-	plugin.addRibbonIcon("calendar-days", plugin.i18n.translate("commands.openCalendarView"), async () => {
-		await plugin.activateCalendarView();
-	});
+	plugin.addRibbonIcon(
+		"calendar-days",
+		plugin.i18n.translate("commands.openCalendarView"),
+		async () => {
+			await plugin.activateCalendarView();
+		}
+	);
 
-	plugin.addRibbonIcon("calendar", plugin.i18n.translate("commands.openAdvancedCalendarView"), async () => {
-		await plugin.openBasesFileForCommand("open-advanced-calendar-view");
-	});
+	plugin.addRibbonIcon(
+		"calendar",
+		plugin.i18n.translate("commands.openAdvancedCalendarView"),
+		async () => {
+			await plugin.openBasesFileForCommand("open-advanced-calendar-view");
+		}
+	);
 
-	plugin.addRibbonIcon("check-square", plugin.i18n.translate("commands.openTasksView"), async () => {
-		await plugin.openBasesFileForCommand("open-tasks-view");
-	});
+	plugin.addRibbonIcon(
+		"check-square",
+		plugin.i18n.translate("commands.openTasksView"),
+		async () => {
+			await plugin.openBasesFileForCommand("open-tasks-view");
+		}
+	);
 
 	plugin.addRibbonIcon("list", plugin.i18n.translate("commands.openAgendaView"), async () => {
 		await plugin.openBasesFileForCommand("open-agenda-view");
 	});
 
-	plugin.addRibbonIcon("columns-3", plugin.i18n.translate("commands.openKanbanView"), async () => {
-		await plugin.openBasesFileForCommand("open-kanban-view");
-	});
+	plugin.addRibbonIcon(
+		"columns-3",
+		plugin.i18n.translate("commands.openKanbanView"),
+		async () => {
+			await plugin.openBasesFileForCommand("open-kanban-view");
+		}
+	);
 
 	plugin.addRibbonIcon("timer", plugin.i18n.translate("commands.openPomodoroView"), async () => {
 		await plugin.activatePomodoroView();
@@ -151,9 +190,13 @@ export function registerRibbonIcons(plugin: TaskNotesPlugin): void {
 		}
 	);
 
-	plugin.addRibbonIcon("tasknotes-simple", plugin.i18n.translate("commands.createNewTask"), () => {
-		plugin.openTaskCreationModal();
-	});
+	plugin.addRibbonIcon(
+		"tasknotes-simple",
+		plugin.i18n.translate("commands.createNewTask"),
+		() => {
+			plugin.openTaskCreationModal();
+		}
+	);
 }
 
 export function initializeCalendarProviders(plugin: TaskNotesPlugin): void {
@@ -200,7 +243,7 @@ export async function initializeHTTPAPI(plugin: TaskNotesPlugin): Promise<void> 
 		new Notice(`TaskNotes API started on port ${plugin.apiService.getPort()}`);
 	} catch (error) {
 		console.error("Failed to initialize HTTP API:", error);
-		new Notice("Failed to start TaskNotes API server. Check console for details.");
+		new Notice("Failed to start tasknotes API server. Check console for details.");
 	}
 }
 
@@ -254,115 +297,129 @@ function registerEditorIntegrations(plugin: TaskNotesPlugin): void {
 }
 
 export function initializeServicesLazily(plugin: TaskNotesPlugin): void {
-	setTimeout(async () => {
-		try {
-			plugin.pomodoroService = new PomodoroService(plugin);
-			await plugin.pomodoroService.initialize();
-			await plugin.icsSubscriptionService.initialize();
+	window.setTimeout(() => {
+		void (async () => {
+			try {
+				plugin.pomodoroService = new PomodoroService(plugin);
+				await plugin.pomodoroService.initialize();
+				await plugin.icsSubscriptionService.initialize();
 
-			plugin.autoExportService = new AutoExportService(plugin);
-			plugin.autoExportService.start();
+				plugin.autoExportService = new AutoExportService(plugin);
+				plugin.autoExportService.start();
 
-			plugin.googleCalendarService.on("data-changed", () => {
-				plugin.notifyDataChanged(undefined, false, true);
-			});
-			await plugin.googleCalendarService.initialize();
+				plugin.googleCalendarService.on("data-changed", () => {
+					plugin.notifyDataChanged(undefined, false, true);
+				});
+				await plugin.googleCalendarService.initialize();
 
-			plugin.taskCalendarSyncService = new (await import("../services/TaskCalendarSyncService"))
-				.TaskCalendarSyncService(plugin, plugin.googleCalendarService);
+				plugin.taskCalendarSyncService = new (
+					await import("../services/TaskCalendarSyncService")
+				).TaskCalendarSyncService(plugin, plugin.googleCalendarService);
+				plugin.taskCalendarSyncService.startRecoveryQueueProcessor();
 
-			plugin.registerEvent(
-				plugin.emitter.on("file-deleted", (data: FileDeletedEventData) => {
-					if (!plugin.taskCalendarSyncService?.isEnabled()) {
-						return;
+				plugin.registerEvent(
+					plugin.emitter.on("file-deleted", (data: FileDeletedEventData) => {
+						if (!plugin.taskCalendarSyncService) {
+							return;
+						}
+
+						const eventIdKey = plugin.fieldMapper.toUserField("googleCalendarEventId");
+						const prevCache = data.prevCache as
+							| { frontmatter?: Record<string, unknown> }
+							| undefined;
+						const eventId = prevCache?.frontmatter?.[eventIdKey];
+
+						if (typeof eventId === "string" && eventId.length > 0) {
+							plugin.taskCalendarSyncService
+								.deleteTaskFromCalendarByPath(data.path, eventId)
+								.catch((error) => {
+									console.warn(
+										"Failed to delete task from Google Calendar on file deletion:",
+										error
+									);
+								});
+						}
+					})
+				);
+
+				plugin.microsoftCalendarService.on("data-changed", () => {
+					plugin.notifyDataChanged(undefined, false, true);
+				});
+				await plugin.microsoftCalendarService.initialize();
+
+				await initializeHTTPAPI(plugin);
+
+				const { TaskLinkDetectionService } = await import(
+					"../services/TaskLinkDetectionService"
+				);
+				plugin.taskLinkDetectionService = new TaskLinkDetectionService(plugin);
+
+				const { InstantTaskConvertService } = await import(
+					"../services/InstantTaskConvertService"
+				);
+				plugin.instantTaskConvertService = new InstantTaskConvertService(
+					plugin,
+					plugin.statusManager,
+					plugin.priorityManager
+				);
+
+				const { createInstantConvertButtons } = await import(
+					"../editor/InstantConvertButtons"
+				);
+				plugin.registerEditorExtension(createInstantConvertButtons(plugin));
+
+				plugin.taskUpdateListenerForEditor = plugin.emitter.on(
+					EVENT_TASK_UPDATED,
+					(data: { path?: string; updatedTask?: TaskInfo }) => {
+						plugin.app.workspace.iterateRootLeaves((leaf) => {
+							if (leaf.view && leaf.view.getViewType() === "markdown") {
+								const editor = (leaf.view as MarkdownView).editor;
+								const cm = getCodeMirrorEditor(editor);
+								if (cm) {
+									const taskPath = data?.path || data?.updatedTask?.path;
+									dispatchTaskUpdate(cm as EditorView, taskPath);
+								}
+							}
+						});
 					}
+				);
 
-					const eventIdKey = plugin.fieldMapper.toUserField("googleCalendarEventId");
-					const prevCache = data.prevCache as { frontmatter?: Record<string, unknown> } | undefined;
-					const eventId = prevCache?.frontmatter?.[eventIdKey];
-
-					if (typeof eventId === "string" && eventId.length > 0) {
-						plugin.taskCalendarSyncService
-							.deleteTaskFromCalendarByPath(data.path, eventId)
-							.catch((error) => {
-								console.warn(
-									"Failed to delete task from Google Calendar on file deletion:",
-									error
-								);
-							});
-					}
-				})
-			);
-
-			plugin.microsoftCalendarService.on("data-changed", () => {
-				plugin.notifyDataChanged(undefined, false, true);
-			});
-			await plugin.microsoftCalendarService.initialize();
-
-			await initializeHTTPAPI(plugin);
-
-			const { TaskLinkDetectionService } = await import("../services/TaskLinkDetectionService");
-			plugin.taskLinkDetectionService = new TaskLinkDetectionService(plugin);
-
-			const { InstantTaskConvertService } = await import(
-				"../services/InstantTaskConvertService"
-			);
-			plugin.instantTaskConvertService = new InstantTaskConvertService(
-				plugin,
-				plugin.statusManager,
-				plugin.priorityManager
-			);
-
-			const { createInstantConvertButtons } = await import("../editor/InstantConvertButtons");
-			plugin.registerEditorExtension(createInstantConvertButtons(plugin));
-
-			plugin.taskUpdateListenerForEditor = plugin.emitter.on(
-				EVENT_TASK_UPDATED,
-				(data: { path?: string; updatedTask?: TaskInfo }) => {
-					plugin.app.workspace.iterateRootLeaves((leaf) => {
-						if (leaf.view && leaf.view.getViewType() === "markdown") {
-							const editor = (leaf.view as MarkdownView).editor;
-							if (editor && (editor as Editor & { cm?: EditorView }).cm) {
-								const taskPath = data?.path || data?.updatedTask?.path;
-								dispatchTaskUpdate((editor as Editor & { cm: EditorView }).cm, taskPath);
+				plugin.registerEvent(
+					plugin.app.workspace.on("active-leaf-change", (leaf) => {
+						window.setTimeout(() => {
+							if (leaf && leaf.view && leaf.view.getViewType() === "markdown") {
+								const editor = (leaf.view as MarkdownView).editor;
+								const cm = getCodeMirrorEditor(editor);
+								if (cm) {
+									dispatchTaskUpdate(cm as EditorView);
+								}
 							}
-						}
-					});
-				}
-			);
+						}, 50);
+					})
+				);
 
-			plugin.registerEvent(
-				plugin.app.workspace.on("active-leaf-change", (leaf) => {
-					setTimeout(() => {
-						if (leaf && leaf.view && leaf.view.getViewType() === "markdown") {
-							const editor = (leaf.view as MarkdownView).editor;
-							if (editor && (editor as Editor & { cm?: EditorView }).cm) {
-								dispatchTaskUpdate((editor as Editor & { cm: EditorView }).cm);
+				plugin.registerEvent(
+					plugin.app.workspace.on("layout-change", () => {
+						window.setTimeout(() => {
+							const activeView =
+								plugin.app.workspace.getActiveViewOfType(MarkdownView);
+							if (activeView) {
+								const editor = activeView.editor;
+								const cm = getCodeMirrorEditor(editor);
+								if (cm) {
+									dispatchTaskUpdate(cm as EditorView);
+								}
 							}
-						}
-					}, 50);
-				})
-			);
+						}, 100);
+					})
+				);
 
-			plugin.registerEvent(
-				plugin.app.workspace.on("layout-change", () => {
-					setTimeout(() => {
-						const activeView = plugin.app.workspace.getActiveViewOfType(MarkdownView);
-						if (activeView) {
-							const editor = activeView.editor;
-							if (editor && (editor as Editor & { cm?: EditorView }).cm) {
-								dispatchTaskUpdate((editor as Editor & { cm: EditorView }).cm);
-							}
-						}
-					}, 100);
-				})
-			);
-
-			plugin.setupStatusBarEventListeners();
-			plugin.setupTimeTrackingEventListeners();
-			await plugin.checkForVersionUpdate();
-		} catch (error) {
-			console.error("Error during lazy service initialization:", error);
-		}
+				plugin.setupStatusBarEventListeners();
+				plugin.setupTimeTrackingEventListeners();
+				await plugin.checkForVersionUpdate();
+			} catch (error) {
+				console.error("Error during lazy service initialization:", error);
+			}
+		})();
 	}, 10);
 }

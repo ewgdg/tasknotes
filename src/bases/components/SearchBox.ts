@@ -27,7 +27,7 @@ export class SearchBox {
 	constructor(
 		container: HTMLElement,
 		onSearch: (term: string) => void,
-		debounceMs: number = 300
+		debounceMs = 300
 	) {
 		this.container = container;
 		this.onSearch = onSearch;
@@ -176,6 +176,16 @@ export class SearchBox {
 	}
 
 	/**
+	 * Focus the search input and select its current value.
+	 */
+	focus(): void {
+		if (!this.inputEl) return;
+
+		this.inputEl.focus();
+		this.inputEl.select();
+	}
+
+	/**
 	 * Set input value programmatically
 	 */
 	setValue(value: string): void {
@@ -219,4 +229,3 @@ export class SearchBox {
 		this.debouncedSearch = null;
 	}
 }
-

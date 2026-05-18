@@ -135,7 +135,7 @@ Query params:
 
 Important:
 
-- Filtering params such as `status`, `priority`, `tag`, `project`, `due_before`, `due_after`, `overdue`, `completed`, `archived`, and `sort` are rejected on this endpoint with HTTP `400`.
+- Filtering params such as `status`, `priority`, `tag`, `project`, `context`, `due_before`, `due_after`, `overdue`, `completed`, `archived`, and `sort` are rejected on this endpoint with HTTP `400`.
 - Use `POST /api/tasks/query` for filtering.
 
 Example:
@@ -150,6 +150,7 @@ Response fields:
 - `data.pagination` with `total`, `offset`, `limit`, `hasMore`
 - `data.vault`
 - `data.note`
+- Task objects include configured TaskNotes user fields in `customProperties`, keyed by their frontmatter property key.
 
 ### `POST /api/tasks`
 
@@ -163,12 +164,21 @@ Common optional fields:
 
 - `details`, `status`, `priority`, `due`, `scheduled`
 - `tags`, `contexts`, `projects`
-- `recurrence`, `timeEstimate`
+- `recurrence`, `recurrence_anchor`, `timeEstimate`, `reminders`
+- `blockedBy`
+
+`blockedBy` accepts an array of dependency objects:
+
+- `uid`: link or identifier for the blocking task, such as `[[Project setup]]`
+- `reltype`: one of `FINISHTOSTART`, `FINISHTOFINISH`, `STARTTOSTART`, or `STARTTOFINISH`
+- `gap`: optional ISO 8601 duration, such as `P1D`
+
+`blocking` is a read-only reverse relationship in API responses. To make a task block existing tasks, update those existing tasks' `blockedBy` fields.
 
 ```bash
 curl -X POST http://localhost:8080/api/tasks \
   -H "Content-Type: application/json" \
-  -d '{"title":"Review docs","priority":"high"}'
+  -d '{"title":"Review docs","priority":"high","blockedBy":[{"uid":"[[Draft docs]]","reltype":"FINISHTOSTART"}]}'
 ```
 
 Returns HTTP `201` with created task data.
@@ -178,6 +188,8 @@ Returns HTTP `201` with created task data.
 Get one task by path id.
 
 - `:id` must be URL-encoded task path.
+- Single-task reads include the task body in `details`.
+- Configured TaskNotes user fields are returned in `customProperties`, keyed by their frontmatter property key.
 
 ```bash
 curl "http://localhost:8080/api/tasks/TaskNotes%2FTasks%2FReview%20docs.md"
@@ -186,6 +198,8 @@ curl "http://localhost:8080/api/tasks/TaskNotes%2FTasks%2FReview%20docs.md"
 ### `PUT /api/tasks/:id`
 
 Update task with partial payload.
+
+Configured TaskNotes user fields can be updated either by their frontmatter property key or via `customProperties`.
 
 ```bash
 curl -X PUT "http://localhost:8080/api/tasks/TaskNotes%2FTasks%2FReview%20docs.md" \
@@ -217,7 +231,9 @@ Request body:
 
 Advanced filtering.
 
-Request body is a `FilterQuery` object. Root object is a group with:
+Request body is a `FilterQuery` object. `FilterQuery` is still the supported advanced query shape for the HTTP API.
+
+The root object is a group with:
 
 - `type: "group"`
 - `id`
@@ -249,6 +265,64 @@ Example:
   "sortDirection": "asc"
 }
 ```
+
+Filter tasks by context:
+
+```json
+{
+  "type": "group",
+  "id": "root",
+  "conjunction": "and",
+  "children": [
+    {
+      "type": "condition",
+      "id": "context",
+      "property": "contexts",
+      "operator": "contains",
+      "value": "@office"
+    }
+  ],
+  "sortKey": "due",
+  "sortDirection": "asc"
+}
+```
+
+Filter active, unarchived tasks, similar to the default available-task view:
+
+```json
+{
+  "type": "group",
+  "id": "root",
+  "conjunction": "and",
+  "children": [
+    {
+      "type": "condition",
+      "id": "not-archived",
+      "property": "archived",
+      "operator": "is-not-checked"
+    },
+    {
+      "type": "condition",
+      "id": "not-completed",
+      "property": "status.isCompleted",
+      "operator": "is-not-checked"
+    }
+  ],
+  "sortKey": "due",
+  "sortDirection": "asc",
+  "groupKey": "none"
+}
+```
+
+Condition fields:
+
+- `type`: `"condition"`
+- `id`: any stable string for your client
+- `property`: a task property, such as `title`, `status`, `priority`, `tags`, `contexts`, `projects`, `blockedBy`, `blocking`, `due`, `scheduled`, `completedDate`, `dateCreated`, `dateModified`, `archived`, `dependencies.isBlocked`, `dependencies.isBlocking`, `timeEstimate`, `recurrence`, or `status.isCompleted`
+- `operator`: one of `is`, `is-not`, `contains`, `does-not-contain`, `is-before`, `is-after`, `is-on-or-before`, `is-on-or-after`, `is-empty`, `is-not-empty`, `is-checked`, `is-not-checked`, `is-greater-than`, `is-less-than`, `is-greater-than-or-equal`, or `is-less-than-or-equal`
+- `value`: required for comparison operators, omitted for empty/checked operators
+
+For user-defined fields, use `property: "user:<fieldId>"`.
 
 Response:
 

@@ -22,11 +22,14 @@ Default mappings:
 - **Open Tasks View** → `TaskNotes/Views/tasks-default.base`
 - **Open Calendar View** → `TaskNotes/Views/calendar-default.base`
 - **Open Agenda View** → `TaskNotes/Views/agenda-default.base`
+- **Pomodoro Statistics Base** → `TaskNotes/Views/pomodoro-stats.base`
 - **Relationships Widget** → `TaskNotes/Views/relationships.base`
 
 Each command allows you to specify a custom `.base` file path and includes a reset button to restore the default path.
 
 **Create Default Files**: Button to generate all default `.base` files in the `TaskNotes/Views/` directory. Existing files are not overwritten.
+
+The generated Pomodoro statistics Base reads Pomodoro sessions from daily notes frontmatter. If your Pomodoro history is still stored in plugin data, migrate it from **Settings → TaskNotes → Features** before using that Base file.
 
 ## OAuth Calendar Integration
 
@@ -41,6 +44,10 @@ OAuth integration requires creating your own OAuth application with Google and/o
 ### Google Calendar
 
 Provide **Client ID** and **Client Secret** from Google Cloud Console, then use **Connect Google Calendar** to complete OAuth loopback authentication. **Disconnect** revokes local credentials.
+
+The **Target calendar** setting used for exporting tasks to Google Calendar is also used as the default selection when creating a manual external calendar event from the calendar view. If the target calendar is unavailable, TaskNotes falls back to the provider's primary calendar.
+
+For timed task exports, **Default reminder** accepts one or more minute offsets separated by commas, such as `60, 1440`. All-day task exports use the target Google Calendar's default reminder settings.
 
 When connected, displays:
 - Connected account email

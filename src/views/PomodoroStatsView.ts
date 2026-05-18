@@ -1,5 +1,6 @@
-import { ItemView, WorkspaceLeaf, Setting } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, setTooltip } from "obsidian";
 import { format, startOfWeek, endOfWeek } from "date-fns";
+import type { Day } from "date-fns";
 import TaskNotesPlugin from "../main";
 import { POMODORO_STATS_VIEW_TYPE, PomodoroHistoryStats, PomodoroSessionHistory } from "../types";
 import {
@@ -8,6 +9,10 @@ import {
 } from "../utils/dateUtils";
 import { getSessionDuration } from "../utils/pomodoroUtils";
 import { calculatePomodoroStats } from "../utils/pomodoroStats";
+
+function isDay(value: number): value is Day {
+	return Number.isInteger(value) && value >= 0 && value <= 6;
+}
 
 export class PomodoroStatsView extends ItemView {
 	plugin: TaskNotesPlugin;
@@ -42,6 +47,7 @@ export class PomodoroStatsView extends ItemView {
 
 	async onOpen() {
 		await this.plugin.onReady();
+		await this.waitForPomodoroService();
 		await this.render();
 	}
 
@@ -50,6 +56,7 @@ export class PomodoroStatsView extends ItemView {
 	}
 
 	async render() {
+		this.contentEl.empty();
 		const container = this.contentEl.createDiv({
 			cls: "tasknotes-plugin tasknotes-container pomodoro-stats-container pomodoro-stats-view",
 		});
@@ -60,13 +67,18 @@ export class PomodoroStatsView extends ItemView {
 		});
 		new Setting(header).setName(this.t("views.pomodoroStats.heading")).setHeading();
 
+		const headerActions = header.createDiv({
+			cls: "pomodoro-stats-view__header-actions",
+		});
+		this.renderBasesMigrationHelp(headerActions);
+
 		// Refresh button
-		const refreshButton = header.createEl("button", {
+		const refreshButton = headerActions.createEl("button", {
 			cls: "pomodoro-stats-refresh-button pomodoro-stats-view__refresh-button",
 			text: this.t("views.pomodoroStats.refresh"),
 		});
 		this.registerDomEvent(refreshButton, "click", () => {
-			this.refreshStats();
+			void this.refreshStats();
 		});
 
 		// Overview section (like TickTick)
@@ -126,16 +138,45 @@ export class PomodoroStatsView extends ItemView {
 		await this.refreshStats();
 	}
 
+	private renderBasesMigrationHelp(container: HTMLElement): void {
+		if (this.plugin.settings.pomodoroStorageLocation === "daily-notes") {
+			return;
+		}
+
+		const helpButton = container.createEl("button", {
+			cls: "pomodoro-stats-view__bases-help",
+		});
+		const title = this.t("views.pomodoroStats.basesMigration.title");
+		const description = this.t("views.pomodoroStats.basesMigration.description");
+		setIcon(helpButton, "help-circle");
+		helpButton.setAttr("aria-label", `${title}: ${description}`);
+		setTooltip(helpButton, description, {
+			placement: "bottom",
+		});
+	}
+
+	private async waitForPomodoroService(): Promise<void> {
+		const startedAt = Date.now();
+		while (!this.plugin.pomodoroService && Date.now() - startedAt < 5000) {
+			await new Promise((resolve) => window.setTimeout(resolve, 50));
+		}
+	}
+
 	private async refreshStats() {
 		try {
+			if (!this.plugin.pomodoroService) {
+				return;
+			}
+
 			const todayLocal = getTodayLocal();
 			const todayUTCAnchor = createUTCDateFromLocalCalendarDate(todayLocal);
 			const yesterdayLocal = new Date(todayLocal);
 			yesterdayLocal.setDate(yesterdayLocal.getDate() - 1);
 			const yesterdayUTCAnchor = createUTCDateFromLocalCalendarDate(yesterdayLocal);
 			const firstDaySetting = this.plugin.settings.calendarViewSettings.firstDay || 0;
-			const weekStartOptions = {
-				weekStartsOn: firstDaySetting as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+			const weekStartsOn = isDay(firstDaySetting) ? firstDaySetting : 0;
+			const weekStartOptions: { weekStartsOn: Day } = {
+				weekStartsOn,
 			};
 			const weekStart = startOfWeek(todayUTCAnchor, weekStartOptions);
 			const weekEnd = endOfWeek(todayUTCAnchor, weekStartOptions);

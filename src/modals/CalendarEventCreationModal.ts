@@ -1,7 +1,11 @@
 import { App, Modal, Setting, Notice } from "obsidian";
 import TaskNotesPlugin from "../main";
-import { CalendarProvider, ProviderCalendar } from "../services/CalendarProvider";
-import { TranslationKey } from "../i18n";
+import {
+	CalendarProvider,
+	ProviderCalendar,
+	type CalendarEventData,
+} from "../services/CalendarProvider";
+import type { InterpolationValues, TranslationKey } from "../i18n";
 import { format } from "date-fns";
 
 export interface CalendarEventCreationOptions {
@@ -16,10 +20,29 @@ interface WritableCalendarEntry {
 	calendar: ProviderCalendar;
 }
 
+export function getDefaultWritableCalendarIndex(
+	writableCalendars: WritableCalendarEntry[],
+	googleTargetCalendarId: string | undefined
+): number {
+	if (googleTargetCalendarId) {
+		const targetCalendarIndex = writableCalendars.findIndex(
+			(entry) =>
+				entry.provider.providerId === "google" &&
+				entry.calendar.id === googleTargetCalendarId
+		);
+		if (targetCalendarIndex >= 0) {
+			return targetCalendarIndex;
+		}
+	}
+
+	const primaryIndex = writableCalendars.findIndex((entry) => entry.calendar.primary);
+	return primaryIndex >= 0 ? primaryIndex : 0;
+}
+
 export class CalendarEventCreationModal extends Modal {
 	plugin: TaskNotesPlugin;
 	options: CalendarEventCreationOptions;
-	private translate: (key: TranslationKey, variables?: Record<string, any>) => string;
+	private translate: (key: TranslationKey, variables?: InterpolationValues) => string;
 
 	private titleInput: HTMLInputElement;
 	private descriptionInput: HTMLTextAreaElement;
@@ -59,7 +82,7 @@ export class CalendarEventCreationModal extends Modal {
 		this.keyboardHandler = (e: KeyboardEvent) => {
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
 				e.preventDefault();
-				this.handleSubmit();
+				void this.handleSubmit();
 			}
 		};
 		this.containerEl.addEventListener("keydown", this.keyboardHandler);
@@ -102,13 +125,11 @@ export class CalendarEventCreationModal extends Modal {
 						const label = `${entry.calendar.summary} (${entry.provider.providerName})`;
 						dropdown.addOption(String(i), label);
 					}
-					// Default to primary calendar if available
-					const primaryIdx = this.writableCalendars.findIndex(
-						(e) => e.calendar.primary
+					const defaultIndex = getDefaultWritableCalendarIndex(
+						this.writableCalendars,
+						this.plugin.settings.googleCalendarExport.targetCalendarId
 					);
-					if (primaryIdx >= 0) {
-						dropdown.setValue(String(primaryIdx));
-					}
+					dropdown.setValue(String(defaultIndex));
 				});
 		}
 
@@ -147,7 +168,9 @@ export class CalendarEventCreationModal extends Modal {
 			text: this.translate("modals.calendarEventCreation.createButton"),
 			cls: "mod-cta calendar-event-create-button",
 		});
-		createButton.addEventListener("click", () => this.handleSubmit());
+		createButton.addEventListener("click", () => {
+			void this.handleSubmit();
+		});
 
 		this.validateForm();
 	}
@@ -171,9 +194,7 @@ export class CalendarEventCreationModal extends Modal {
 		}
 
 		// Determine which calendar to use
-		const selectedIdx = this.calendarDropdown
-			? parseInt(this.calendarDropdown.value)
-			: 0;
+		const selectedIdx = this.calendarDropdown ? parseInt(this.calendarDropdown.value) : 0;
 		const entry = this.writableCalendars[selectedIdx];
 		if (!entry) {
 			new Notice(this.translate("modals.calendarEventCreation.noCalendarSelected"));
@@ -184,7 +205,7 @@ export class CalendarEventCreationModal extends Modal {
 			const { start, end, allDay } = this.options;
 			const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-			const eventData: any = {
+			const eventData: CalendarEventData = {
 				summary: title,
 				start: allDay
 					? { date: format(start, "yyyy-MM-dd") }
@@ -202,9 +223,7 @@ export class CalendarEventCreationModal extends Modal {
 
 			await entry.provider.createEvent(entry.calendar.id, eventData);
 
-			new Notice(
-				this.translate("modals.calendarEventCreation.success", { title })
-			);
+			new Notice(this.translate("modals.calendarEventCreation.success", { title }));
 			this.options.onEventCreated?.();
 			this.close();
 		} catch (error) {

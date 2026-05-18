@@ -30,13 +30,13 @@ export function createNoteCard(
 ): HTMLElement {
 	const opts = { ...DEFAULT_NOTE_CARD_OPTIONS, ...options };
 
-	const item = document.createElement("div");
+	const item = activeDocument.createElement("div");
 	// Check if this is a daily note using the core plugin
 	let isDailyNote = false;
 	try {
 		const allDailyNotes = getAllDailyNotes();
 		isDailyNote = Object.values(allDailyNotes).some((file) => file.path === note.path);
-	} catch (error) {
+	} catch {
 		// Daily Notes interface not available, fallback to false
 		isDailyNote = false;
 	}
@@ -125,9 +125,9 @@ export function createNoteCard(
 		const file = plugin.app.vault.getAbstractFileByPath(note.path);
 		if (file instanceof TFile) {
 			if (e.ctrlKey || e.metaKey) {
-				plugin.app.workspace.openLinkText(note.path, "", true);
+				void plugin.app.workspace.openLinkText(note.path, "", true);
 			} else {
-				plugin.app.workspace.getLeaf(false).openFile(file);
+				void plugin.app.workspace.getLeaf(false).openFile(file);
 			}
 		}
 	});
@@ -139,7 +139,7 @@ export function createNoteCard(
 			e.preventDefault();
 			const file = plugin.app.vault.getAbstractFileByPath(note.path);
 			if (file instanceof TFile) {
-				plugin.app.workspace.openLinkText(note.path, "", true);
+				void plugin.app.workspace.openLinkText(note.path, "", true);
 			}
 		}
 	});
@@ -179,7 +179,7 @@ export function updateNoteCard(
 	try {
 		const allDailyNotes = getAllDailyNotes();
 		isDailyNote = Object.values(allDailyNotes).some((file) => file.path === note.path);
-	} catch (error) {
+	} catch {
 		// Daily Notes interface not available, fallback to false
 		isDailyNote = false;
 	}

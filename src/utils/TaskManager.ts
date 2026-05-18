@@ -1,7 +1,11 @@
-/* eslint-disable no-console */
+ 
 import { TFile, App, Events, EventRef } from "obsidian";
 import { TaskInfo, NoteInfo } from "../types";
 import { FieldMapper } from "../services/FieldMapper";
+import {
+	normalizePriorityConfigValue,
+	normalizeStatusConfigValue,
+} from "../core/fieldMapping";
 import { FilterUtils } from "./FilterUtils";
 import {
 	getTodayString,
@@ -11,6 +15,8 @@ import {
 } from "./dateUtils";
 import { calculateTotalTimeSpent } from "./helpers";
 import { TaskNotesSettings } from "../types/settings";
+import type { DependencyCache } from "./DependencyCache";
+import { isPathInExcludedFolder, parseExcludedFolders } from "./pathExclusions";
 
 /**
  * Just-in-time task manager that reads task information on-demand from Obsidian's
@@ -41,17 +47,15 @@ export class TaskManager extends Events {
 	private debouncedHandlers: Map<string, number> = new Map();
 	private readonly DEBOUNCE_DELAY = 300; // 300ms delay after user stops typing
 
+	// Write-through fallback for files TaskNotes just wrote before Obsidian metadata is ready.
+	private pendingTaskInfoByPath = new Map<string, TaskInfo>();
+
 	constructor(app: App, settings: TaskNotesSettings, fieldMapper?: FieldMapper) {
 		super();
 		this.app = app;
 		this.settings = settings;
 		this.taskTag = settings.taskTag;
-		this.excludedFolders = settings.excludedFolders
-			? settings.excludedFolders
-					.split(",")
-					.map((folder) => folder.trim())
-					.filter((folder) => folder.length > 0)
-			: [];
+		this.excludedFolders = parseExcludedFolders(settings.excludedFolders);
 		this.fieldMapper = fieldMapper;
 		this.disableNoteIndexing = settings.disableNoteIndexing;
 		this.storeTitleInFilename = settings.storeTitleInFilename;
@@ -80,28 +84,31 @@ export class TaskManager extends Events {
 	/**
 	 * Check if a file is a task based on current settings
 	 */
-	isTaskFile(frontmatter: any): boolean {
-		if (!frontmatter) return false;
+	isTaskFile(frontmatter: unknown): boolean {
+		if (!frontmatter || typeof frontmatter !== "object" || Array.isArray(frontmatter)) {
+			return false;
+		}
+		const frontmatterRecord = frontmatter as Record<string, unknown>;
 
 		if (this.settings.taskIdentificationMethod === "property") {
 			const propName = this.settings.taskPropertyName;
 			const propValue = this.settings.taskPropertyValue;
 			if (!propName || !propValue) return false; // Not configured
 
-			const frontmatterValue = frontmatter[propName];
+			const frontmatterValue = frontmatterRecord[propName];
 			if (frontmatterValue === undefined) return false;
 
 			// Handle both single and multi-value properties
 			if (Array.isArray(frontmatterValue)) {
-				return frontmatterValue.some((val: any) =>
+				return frontmatterValue.some((val: unknown) =>
 					this.comparePropertyValues(val, propValue)
 				);
 			}
 			return this.comparePropertyValues(frontmatterValue, propValue);
-		} else {
-			// Fallback to legacy tag-based method with hierarchical support
-			if (!Array.isArray(frontmatter.tags)) return false;
-			return frontmatter.tags.some((tag: string) => {
+			} else {
+				// Fallback to legacy tag-based method with hierarchical support
+				if (!Array.isArray(frontmatterRecord.tags)) return false;
+				return frontmatterRecord.tags.some((tag) => {
 				if (typeof tag !== 'string') return false;
 				// Obsidian metadata cache prepends '#' to frontmatter tags
 				const cleanTag = tag.startsWith('#') ? tag.slice(1) : tag;
@@ -113,7 +120,7 @@ export class TaskManager extends Events {
 	/**
 	 * Compare frontmatter property values with settings value, with boolean coercion support.
 	 */
-	private comparePropertyValues(frontmatterValue: any, settingValue: string): boolean {
+	private comparePropertyValues(frontmatterValue: unknown, settingValue: string): boolean {
 		// Handle boolean frontmatter values compared to string settings (e.g., true vs "true")
 		if (typeof frontmatterValue === "boolean" && typeof settingValue === "string") {
 			const lower = settingValue.toLowerCase();
@@ -158,7 +165,7 @@ export class TaskManager extends Events {
 	/**
 	 * Handle file changes with debouncing to prevent excessive updates
 	 */
-	private handleFileChangedDebounced(file: TFile, cache: any): void {
+	private handleFileChangedDebounced(file: TFile, cache: unknown): void {
 		const path = file.path;
 
 		// Cancel existing debounced handler for this file
@@ -170,7 +177,7 @@ export class TaskManager extends Events {
 		// Schedule new handler
 		const timeoutId = window.setTimeout(() => {
 			this.debouncedHandlers.delete(path);
-			this.handleFileChanged(file, cache);
+			void this.handleFileChanged(file, cache);
 		}, this.DEBOUNCE_DELAY);
 
 		this.debouncedHandlers.set(path, timeoutId);
@@ -179,7 +186,11 @@ export class TaskManager extends Events {
 	/**
 	 * Handle file change - emit events for listeners
 	 */
-	private async handleFileChanged(file: TFile, cache: any): Promise<void> {
+	private async handleFileChanged(file: TFile, cache: unknown): Promise<void> {
+		if (cache && typeof cache === "object" && "frontmatter" in cache) {
+			this.pendingTaskInfoByPath.delete(file.path);
+		}
+
 		// Just emit the event - no cache to update
 		this.trigger("file-updated", { path: file.path, file });
 		this.trigger("data-changed");
@@ -188,7 +199,9 @@ export class TaskManager extends Events {
 	/**
 	 * Handle file deletion
 	 */
-	private handleFileDeleted(path: string, prevCache: any): void {
+	private handleFileDeleted(path: string, prevCache: unknown): void {
+		this.pendingTaskInfoByPath.delete(path);
+
 		// Cancel any pending debounced handlers
 		const timeoutId = this.debouncedHandlers.get(path);
 		if (timeoutId) {
@@ -204,6 +217,16 @@ export class TaskManager extends Events {
 	 * Handle file rename
 	 */
 	private handleFileRenamed(file: TFile, oldPath: string): void {
+		const pendingTaskInfo = this.pendingTaskInfoByPath.get(oldPath);
+		if (pendingTaskInfo) {
+			this.pendingTaskInfoByPath.delete(oldPath);
+			this.pendingTaskInfoByPath.set(file.path, {
+				...pendingTaskInfo,
+				id: file.path,
+				path: file.path,
+			});
+		}
+
 		// Cancel any pending debounced handlers for old path
 		const timeoutId = this.debouncedHandlers.get(oldPath);
 		if (timeoutId) {
@@ -219,32 +242,45 @@ export class TaskManager extends Events {
 	 * Check if a file path is valid for inclusion
 	 */
 	isValidFile(path: string): boolean {
-		// Filter out excluded folders
-		if (this.excludedFolders.some((folder) => path.startsWith(folder))) {
-			return false;
-		}
-		return true;
+		return !isPathInExcludedFolder(path, this.excludedFolders);
 	}
 
 	/**
 	 * Get task info for a specific file path (just-in-time)
 	 */
 	async getTaskInfo(path: string): Promise<TaskInfo | null> {
+		if (!this.isValidFile(path)) return null;
+
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (!(file instanceof TFile)) return null;
 
 		const metadata = this.app.metadataCache.getFileCache(file);
-		if (!metadata?.frontmatter) return null;
+		if (!metadata?.frontmatter) {
+			return this.getPendingTaskInfo(path);
+		}
+
+		this.pendingTaskInfoByPath.delete(path);
 
 		if (!this.isTaskFile(metadata.frontmatter)) return null;
 
 		return this.extractTaskInfoFromNative(path, metadata.frontmatter);
 	}
 
+	private getPendingTaskInfo(path: string): TaskInfo | null {
+		const taskInfo = this.pendingTaskInfoByPath.get(path);
+		if (!taskInfo) return null;
+
+		return {
+			...taskInfo,
+			id: taskInfo.id ?? path,
+			path,
+		};
+	}
+
 	/**
 	 * Extract task info from native frontmatter
 	 */
-	private extractTaskInfoFromNative(path: string, frontmatter: any): TaskInfo | null {
+	private extractTaskInfoFromNative(path: string, frontmatter: unknown): TaskInfo | null {
 		if (!frontmatter || !this.fieldMapper) return null;
 
 		// Validate that the file is actually a task
@@ -384,6 +420,8 @@ export class TaskManager extends Events {
 		const files = this.app.vault.getMarkdownFiles();
 
 		const statusField = this.fieldMapper?.toUserField("status") || "status";
+		const expectedStatus =
+			normalizeStatusConfigValue(status, this.settings.customStatuses) ?? status;
 
 		for (const file of files) {
 			if (!this.isValidFile(file.path)) continue;
@@ -391,7 +429,11 @@ export class TaskManager extends Events {
 			const metadata = this.app.metadataCache.getFileCache(file);
 			if (!metadata?.frontmatter || !this.isTaskFile(metadata.frontmatter)) continue;
 
-			if (metadata.frontmatter[statusField] === status) {
+			const actualStatus = normalizeStatusConfigValue(
+				metadata.frontmatter[statusField],
+				this.settings.customStatuses
+			);
+			if (actualStatus === expectedStatus) {
 				taskPaths.push(file.path);
 			}
 		}
@@ -407,6 +449,8 @@ export class TaskManager extends Events {
 		const files = this.app.vault.getMarkdownFiles();
 
 		const priorityField = this.fieldMapper?.toUserField("priority") || "priority";
+		const expectedPriority =
+			normalizePriorityConfigValue(priority, this.settings.customPriorities) ?? priority;
 
 		for (const file of files) {
 			if (!this.isValidFile(file.path)) continue;
@@ -414,7 +458,11 @@ export class TaskManager extends Events {
 			const metadata = this.app.metadataCache.getFileCache(file);
 			if (!metadata?.frontmatter || !this.isTaskFile(metadata.frontmatter)) continue;
 
-			if (metadata.frontmatter[priorityField] === priority) {
+			const actualPriority = normalizePriorityConfigValue(
+				metadata.frontmatter[priorityField],
+				this.settings.customPriorities
+			);
+			if (actualPriority === expectedPriority) {
 				taskPaths.push(file.path);
 			}
 		}
@@ -440,7 +488,10 @@ export class TaskManager extends Events {
 			if (!metadata?.frontmatter || !this.isTaskFile(metadata.frontmatter)) continue;
 
 			const due = metadata.frontmatter[dueField];
-			const status = metadata.frontmatter[statusField];
+			const status = normalizeStatusConfigValue(
+				metadata.frontmatter[statusField],
+				this.settings.customStatuses
+			);
 
 			// Only count as overdue if the status is not marked as completed
 			// Check against user-defined completed statuses from settings
@@ -472,7 +523,8 @@ export class TaskManager extends Events {
 			if (!metadata?.frontmatter || !this.isTaskFile(metadata.frontmatter)) continue;
 
 			const status = metadata.frontmatter[statusField];
-			if (status) statuses.add(status);
+			const normalizedStatus = normalizeStatusConfigValue(status, this.settings.customStatuses);
+			if (normalizedStatus) statuses.add(normalizedStatus);
 		}
 
 		return Array.from(statuses).sort();
@@ -494,7 +546,11 @@ export class TaskManager extends Events {
 			if (!metadata?.frontmatter || !this.isTaskFile(metadata.frontmatter)) continue;
 
 			const priority = metadata.frontmatter[priorityField];
-			if (priority) priorities.add(priority);
+			const normalizedPriority = normalizePriorityConfigValue(
+				priority,
+				this.settings.customPriorities
+			);
+			if (normalizedPriority) priorities.add(normalizedPriority);
 		}
 
 		return Array.from(priorities).sort();
@@ -655,6 +711,8 @@ export class TaskManager extends Events {
 	 * Synchronous task info getter (reads from metadataCache)
 	 */
 	getCachedTaskInfoSync(path: string): TaskInfo | null {
+		if (!this.isValidFile(path)) return null;
+
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (!(file instanceof TFile)) return null;
 
@@ -693,9 +751,9 @@ export class TaskManager extends Events {
 	/**
 	 * Delegate dependency methods to DependencyCache (will be set by main.ts)
 	 */
-	private _dependencyCache?: any;
+	private _dependencyCache?: DependencyCache;
 
-	setDependencyCache(cache: any): void {
+	setDependencyCache(cache: DependencyCache): void {
 		this._dependencyCache = cache;
 	}
 
@@ -742,15 +800,19 @@ export class TaskManager extends Events {
 	 * This is necessary after creating/modifying files because the metadata cache
 	 * updates asynchronously.
 	 */
-	async waitForFreshTaskData(pathOrFile: string | TFile, maxRetries = 10): Promise<void> {
-		const path = pathOrFile instanceof TFile ? pathOrFile.path : pathOrFile;
-		const file = pathOrFile instanceof TFile
-			? pathOrFile
-			: this.app.vault.getAbstractFileByPath(path);
+	async waitForFreshTaskData(
+		pathOrFile: string | { path: string },
+		maxRetries = 10
+	): Promise<void> {
+		const path = typeof pathOrFile === "string" ? pathOrFile : pathOrFile.path;
+		const file =
+			typeof pathOrFile === "string"
+				? this.app.vault.getAbstractFileByPath(path)
+				: pathOrFile;
 
 		if (!(file instanceof TFile)) {
 			// File doesn't exist yet, just wait a bit
-			await new Promise(resolve => setTimeout(resolve, 100));
+			await new Promise(resolve => window.setTimeout(resolve, 100));
 			return;
 		}
 
@@ -762,42 +824,46 @@ export class TaskManager extends Events {
 				return;
 			}
 			// Wait before retrying (50ms, 100ms, 150ms, etc.)
-			await new Promise(resolve => setTimeout(resolve, 50 * (i + 1)));
+			await new Promise(resolve => window.setTimeout(resolve, 50 * (i + 1)));
 		}
 
 		// If we still don't have metadata after retries, log a warning but continue
 		console.warn(`TaskManager: Metadata cache not ready for ${path} after ${maxRetries} retries`);
 	}
 
-	updateConfig(settings: any): void {
+	updateConfig(settings: TaskNotesSettings): void {
 		// Update settings
 		this.settings = settings;
 		this.taskTag = settings.taskTag;
-		this.excludedFolders = settings.excludedFolders
-			? settings.excludedFolders
-					.split(",")
-					.map((folder: string) => folder.trim())
-					.filter((folder: string) => folder.length > 0)
-			: [];
+		this.excludedFolders = parseExcludedFolders(settings.excludedFolders);
 		this.disableNoteIndexing = settings.disableNoteIndexing;
 		this.storeTitleInFilename = settings.storeTitleInFilename;
+		this.pruneExcludedPendingTaskInfo();
 
 		// Emit config changed event
 		this.trigger("data-changed");
 	}
 
-	subscribe(event: string, callback: (...args: any[]) => void): () => void {
+	private pruneExcludedPendingTaskInfo(): void {
+		for (const path of this.pendingTaskInfoByPath.keys()) {
+			if (!this.isValidFile(path)) {
+				this.pendingTaskInfoByPath.delete(path);
+			}
+		}
+	}
+
+	subscribe(event: string, callback: (...args: unknown[]) => void): () => void {
 		this.on(event, callback);
 		return () => {
 			this.off(event, callback);
 		};
 	}
 
-	async getCalendarData(year: number, month: number): Promise<any> {
+	async getCalendarData(year: number, month: number): Promise<Record<string, TaskInfo[]>> {
 		// For now, return a simple calendar data structure
 		// This can be optimized later if needed
 		const tasks = await this.getAllTasks();
-		const calendarData: any = {};
+		const calendarData: Record<string, TaskInfo[]> = {};
 
 		for (const task of tasks) {
 			if (task.scheduled) {
@@ -868,17 +934,26 @@ export class TaskManager extends Events {
 	}
 
 	async clearAllCaches(): Promise<void> {
-		// Not needed - we don't cache
+		this.pendingTaskInfoByPath.clear();
 		this.trigger("data-changed");
 	}
 
 	clearCacheEntry(path: string): void {
-		// Not needed - we don't cache
+		this.pendingTaskInfoByPath.delete(path);
 	}
 
 	updateTaskInfoInCache(path: string, taskInfo: TaskInfo): void {
-		// Not needed - we don't cache
-		// Just emit an event
-		this.trigger("file-updated", { path });
+		if (!this.isValidFile(path)) {
+			this.pendingTaskInfoByPath.delete(path);
+			this.trigger("data-changed");
+			return;
+		}
+
+		this.pendingTaskInfoByPath.set(path, {
+			...taskInfo,
+			id: taskInfo.id ?? path,
+			path,
+		});
+		this.trigger("file-updated", { path, updatedTask: taskInfo });
 	}
 }

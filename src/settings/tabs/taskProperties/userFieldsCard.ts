@@ -1,4 +1,4 @@
-import { Setting } from "obsidian";
+import { Setting, setIcon } from "obsidian";
 import TaskNotesPlugin from "../../../main";
 import {
 	createCard,
@@ -43,12 +43,15 @@ function createDefaultValueInput(
 			translate("settings.taskProperties.customUserFields.placeholders.defaultValue"),
 			field.defaultValue !== undefined ? String(field.defaultValue) : ""
 		);
-		input.addEventListener("change", () => {
+		input.addEventListener("input", () => {
 			const value = input.value.trim();
 			if (value === "") {
 				onChange(undefined);
 			} else {
-				onChange(parseFloat(value));
+				const numericValue = parseFloat(value);
+				if (!Number.isNaN(numericValue)) {
+					onChange(numericValue);
+				}
 			}
 		});
 		inputElement = input;
@@ -79,20 +82,23 @@ function createDefaultValueInput(
 		};
 	} else if (field.type === "list") {
 		// List field uses text input with comma-separated values
-		const currentValue = Array.isArray(field.defaultValue)
-			? field.defaultValue.join(", ")
-			: "";
+		const currentValue = Array.isArray(field.defaultValue) ? field.defaultValue.join(", ") : "";
 		const input = createCardInput(
 			"text",
 			translate("settings.taskProperties.customUserFields.placeholders.defaultValueList"),
 			currentValue
 		);
-		input.addEventListener("change", () => {
+		input.addEventListener("input", () => {
 			const value = input.value.trim();
 			if (value === "") {
 				onChange(undefined);
 			} else {
-				onChange(value.split(",").map(v => v.trim()).filter(v => v));
+				onChange(
+					value
+						.split(",")
+						.map((v) => v.trim())
+						.filter((v) => v)
+				);
 			}
 		});
 		inputElement = input;
@@ -107,7 +113,7 @@ function createDefaultValueInput(
 			translate("settings.taskProperties.customUserFields.placeholders.defaultValue"),
 			typeof field.defaultValue === "string" ? field.defaultValue : ""
 		);
-		input.addEventListener("change", () => {
+		input.addEventListener("input", () => {
 			const value = input.value.trim();
 			onChange(value === "" ? undefined : value);
 		});
@@ -189,9 +195,10 @@ export function renderUserFieldsSection(
 						const customGroupFields = plugin.settings.modalFieldsConfig.fields.filter(
 							(f) => f.group === "custom"
 						);
-						const maxOrder = customGroupFields.length > 0
-							? Math.max(...customGroupFields.map((f) => f.order))
-							: -1;
+						const maxOrder =
+							customGroupFields.length > 0
+								? Math.max(...customGroupFields.map((f) => f.order))
+								: -1;
 
 						plugin.settings.modalFieldsConfig.fields.push({
 							id: newId,
@@ -234,7 +241,7 @@ function renderUserFieldsList(
 			translate("settings.taskProperties.customUserFields.emptyState"),
 			translate("settings.taskProperties.customUserFields.emptyStateButton"),
 			() => {
-				const addUserFieldButton = document.querySelector(
+				const addUserFieldButton = activeDocument.querySelector(
 					'[data-setting-name="Add new user field"] button'
 				);
 				if (addUserFieldButton) {
@@ -282,7 +289,7 @@ function renderUserFieldsList(
 			field.type
 		);
 
-		nameInput.addEventListener("change", () => {
+		nameInput.addEventListener("input", () => {
 			field.displayName = nameInput.value;
 
 			// Also update display name in modal fields config
@@ -300,23 +307,29 @@ function renderUserFieldsList(
 			if (card) {
 				const primaryText = card.querySelector(".tasknotes-settings__card-header-primary");
 				if (primaryText) {
-					primaryText.textContent = field.displayName ||
-						translate("settings.taskProperties.customUserFields.defaultNames.unnamedField");
+					primaryText.textContent =
+						field.displayName ||
+						translate(
+							"settings.taskProperties.customUserFields.defaultNames.unnamedField"
+						);
 				}
 			}
 
 			save();
 		});
 
-		keyInput.addEventListener("change", () => {
+		keyInput.addEventListener("input", () => {
 			field.key = keyInput.value;
 
 			// Update the card header secondary text directly without re-rendering
 			const card = container.querySelector(`[data-card-id="${field.id}"]`);
 			if (card) {
-				const secondaryText = card.querySelector(".tasknotes-settings__card-header-secondary");
+				const secondaryText = card.querySelector(
+					".tasknotes-settings__card-header-secondary"
+				);
 				if (secondaryText) {
-					secondaryText.textContent = field.key ||
+					secondaryText.textContent =
+						field.key ||
 						translate("settings.taskProperties.customUserFields.defaultNames.noKey");
 				}
 			}
@@ -327,21 +340,17 @@ function renderUserFieldsList(
 		typeSelect.addEventListener("change", () => {
 			field.type = typeSelect.value as "text" | "number" | "boolean" | "date" | "list";
 			// Clear default value when type changes to avoid type mismatches
-			field.defaultValue = undefined;
+			field.defaultValue = field.type === "boolean" ? false : undefined;
 			save();
 			// Need to re-render to update the default value input type
 			renderUserFieldsList(container, plugin, save, translate, field.id);
 		});
 
 		// Default value input based on field type
-		const { row: defaultValueRow } = createDefaultValueInput(
-			field,
-			translate,
-			(value) => {
-				field.defaultValue = value;
-				save();
-			}
-		);
+		const { row: defaultValueRow } = createDefaultValueInput(field, translate, (value) => {
+			field.defaultValue = value;
+			save();
+		});
 
 		// NLP Trigger for user field
 		const nlpRows = createNLPTriggerRows(
@@ -354,7 +363,7 @@ function renderUserFieldsList(
 		);
 
 		// Create collapsible filter settings section
-		const filterSectionWrapper = document.createElement("div");
+		const filterSectionWrapper = activeDocument.createElement("div");
 		filterSectionWrapper.addClass("tasknotes-settings__collapsible-section");
 		filterSectionWrapper.addClass("tasknotes-settings__collapsible-section--collapsed");
 
@@ -385,21 +394,42 @@ function renderUserFieldsList(
 		);
 
 		// Add "Filters On" badge if filters are active
-		const filterBadge = filterHeaderLeft.createSpan(
-			"tasknotes-settings__filter-badge"
-		);
+		const filterBadge = filterHeaderLeft.createSpan("tasknotes-settings__filter-badge");
 		const updateFilterBadge = () => {
 			if (hasActiveFilters(field.autosuggestFilter)) {
-				filterBadge.style.display = "inline-flex";
-				filterBadge.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg><span>Filters On</span>`;
+				filterBadge.classList.remove(
+					"tn-static-display-block-2a1b75c9",
+					"tn-static-display-flex-4d51fc62",
+					"tn-static-display-flex-75816cae",
+					"tn-static-display-flex-8bb39979",
+					"tn-static-display-inline-block-60e32dcb",
+					"tn-static-display-inline-cccfa456",
+					"tn-static-display-none-6b99de8b",
+					"tn-static-min-height-800px-997b4c8c"
+				);
+				filterBadge.classList.add("tn-static-display-inline-flex-f984c520");
+				filterBadge.empty();
+				const filterIcon = filterBadge.createSpan();
+				setIcon(filterIcon, "filter");
+				filterBadge.createSpan({ text: "Filters On" });
 			} else {
-				filterBadge.style.display = "none";
+				filterBadge.classList.remove(
+					"tn-static-display-block-2a1b75c9",
+					"tn-static-display-flex-4d51fc62",
+					"tn-static-display-flex-75816cae",
+					"tn-static-display-flex-8bb39979",
+					"tn-static-display-inline-block-60e32dcb",
+					"tn-static-display-inline-cccfa456",
+					"tn-static-display-inline-flex-f984c520",
+					"tn-static-min-height-800px-997b4c8c"
+				);
+				filterBadge.classList.add("tn-static-display-none-6b99de8b");
 			}
 		};
 		updateFilterBadge();
 
 		const chevron = filterHeader.createSpan("tasknotes-settings__collapsible-section-chevron");
-		chevron.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+		setIcon(chevron, "chevron-down");
 
 		// Create content container
 		const filterContent = filterSectionWrapper.createDiv(
@@ -423,7 +453,9 @@ function renderUserFieldsList(
 				"tasknotes-settings__collapsible-section--collapsed"
 			);
 			if (isCollapsed) {
-				filterSectionWrapper.removeClass("tasknotes-settings__collapsible-section--collapsed");
+				filterSectionWrapper.removeClass(
+					"tasknotes-settings__collapsible-section--collapsed"
+				);
 			} else {
 				filterSectionWrapper.addClass("tasknotes-settings__collapsible-section--collapsed");
 			}

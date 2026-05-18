@@ -1,5 +1,5 @@
-/* eslint-disable no-console, @typescript-eslint/no-non-null-assertion */
-import { Notice } from "obsidian";
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- Pomodoro state transitions guard active sessions before dereferencing. */
+import { Notice, TFile, moment as obsidianMoment } from "obsidian";
 import TaskNotesPlugin from "../main";
 import {
 	createDailyNote,
@@ -19,7 +19,7 @@ import {
 	TaskInfo,
 	IWebhookNotifier,
 } from "../types";
-import { TranslationKey } from "../i18n";
+import type { InterpolationValues, TranslationKey } from "../i18n";
 import {
 	getCurrentTimestamp,
 	formatDateForStorage,
@@ -27,7 +27,6 @@ import {
 	parseDateToLocal,
 	createUTCDateFromLocalCalendarDate,
 } from "../utils/dateUtils";
-import { getSessionDuration, timerWorker } from "../utils/pomodoroUtils";
 import {
 	loadPomodoroLocalStateSnapshot,
 	savePomodoroLocalStateSnapshot,
@@ -41,10 +40,32 @@ import {
 	getPomodoroSessionDateKey,
 	sortPomodoroSessions,
 } from "../utils/pomodoroStats";
+import { PomodoroTicker } from "./PomodoroTicker";
+import {
+	clampPomodoroDurationSeconds,
+	formatLocalTimestamp,
+	getActiveElapsedSeconds,
+	getSessionCompletionTimeMs,
+	getSessionRemainingSeconds,
+} from "../utils/pomodoroTime";
+
+type DailyNoteMoment = Parameters<typeof getDailyNote>[0];
+
+function getDailyNoteMoment(date: Date): DailyNoteMoment {
+	return (obsidianMoment as unknown as (input: Date) => DailyNoteMoment)(date);
+}
+
+function isPomodoroSessionHistory(value: unknown): value is PomodoroSessionHistory {
+	return (
+		value !== null &&
+		typeof value === "object" &&
+		typeof (value as { id?: unknown }).id === "string"
+	);
+}
 
 export class PomodoroService {
 	private plugin: TaskNotesPlugin;
-	private timerWorker: Worker | null = null;
+	private ticker: PomodoroTicker | null = null;
 	private state: PomodoroState;
 	private activeAudioContexts: Set<AudioContext> = new Set();
 	private cleanupTimeouts: Set<number> = new Set();
@@ -52,8 +73,9 @@ export class PomodoroService {
 	private lastSelectedTaskPath?: string;
 	private lastSelectedTaskPathLoaded = false;
 	private lastWorkSessionTaskPath?: string;
+	private completionInProgress = false;
 
-	private translate(key: TranslationKey, variables?: Record<string, any>): string {
+	private translate(key: TranslationKey, variables?: InterpolationValues): string {
 		return this.plugin.i18n.translate(key, variables);
 	}
 
@@ -75,7 +97,7 @@ export class PomodoroService {
 
 	async initialize() {
 		await this.loadState();
-		this.setupWorker();
+		this.setupTicker();
 
 		if (this.state.isRunning && this.state.currentSession) {
 			this.resumeTimer();
@@ -89,25 +111,23 @@ export class PomodoroService {
 		this.webhookNotifier = notifier;
 	}
 
-	private setupWorker() {
-		const blob = new Blob([timerWorker], { type: "application/javascript" });
-		const workerUrl = URL.createObjectURL(blob);
-		this.timerWorker = new Worker(workerUrl);
+	private setupTicker() {
+		this.ticker?.destroy();
+		this.ticker = new PomodoroTicker(() => this.handleTimerTick());
+	}
 
-		this.timerWorker.onmessage = (e) => {
-			if (e.data.type === "done") {
-				this.completePomodoro();
-			}
+	private handleTimerTick(): void {
+		if (!this.state.isRunning || !this.state.currentSession) {
+			return;
+		}
 
-			if (e.data.type === "tick") {
-				this.state.timeRemaining = e.data.timeRemaining;
-
-				this.plugin.emitter.trigger(EVENT_POMODORO_TICK, {
-					timeRemaining: this.state.timeRemaining,
-					session: this.state.currentSession,
-				});
-			}
-		};
+		const timeRemaining = this.syncRunningTimeRemaining();
+		if (timeRemaining <= 0 && !this.completionInProgress) {
+			this.completionInProgress = true;
+			void this.completePomodoro().finally(() => {
+				this.completionInProgress = false;
+			});
+		}
 	}
 
 	async loadState() {
@@ -226,17 +246,21 @@ export class PomodoroService {
 			return;
 		}
 
-		// Use custom duration if provided, otherwise use default from settings/state
-		const customDurationSeconds = durationMinutes
-			? Math.max(1, Math.min(120, durationMinutes)) * 60
-			: null;
-		const durationSeconds =
-			customDurationSeconds || Math.max(1, Math.min(120 * 60, this.state.timeRemaining));
+		// Use custom duration if provided, otherwise use the prepared work timer.
+		// If a break is prepared and the user skips it, start a normal work session.
+		const preparedWorkDurationSeconds =
+			this.state.nextSessionType === "short-break" ||
+			this.state.nextSessionType === "long-break"
+				? this.plugin.settings.pomodoroWorkDuration * 60
+				: this.state.timeRemaining;
+		const customDurationSeconds =
+			durationMinutes !== undefined ? durationMinutes * 60 : undefined;
+		const durationSeconds = clampPomodoroDurationSeconds(
+			customDurationSeconds ?? preparedWorkDurationSeconds
+		);
 
 		// Convert to minutes for planned duration
 		const plannedDurationMinutes = durationSeconds / 60;
-
-		console.log("Starting pomodoro with planned duration:", plannedDurationMinutes, "minutes");
 
 		const sessionStartTime = getCurrentTimestamp();
 
@@ -354,8 +378,10 @@ export class PomodoroService {
 			return;
 		}
 
+		this.syncRunningTimeRemaining();
 		this.stopTimer();
 		this.state.isRunning = false;
+		const pausedAt = getCurrentTimestamp();
 
 		// End the current active period
 		if (this.state.currentSession && this.state.currentSession.activePeriods.length > 0) {
@@ -364,7 +390,7 @@ export class PomodoroService {
 					this.state.currentSession.activePeriods.length - 1
 				];
 			if (!currentPeriod.endTime) {
-				currentPeriod.endTime = getCurrentTimestamp();
+				currentPeriod.endTime = pausedAt;
 			}
 		}
 
@@ -443,11 +469,15 @@ export class PomodoroService {
 		}
 
 		const wasRunning = this.state.isRunning;
+		if (wasRunning) {
+			this.syncRunningTimeRemaining();
+		}
 		this.stopTimer();
+		const stoppedAt = getCurrentTimestamp();
 
 		if (this.state.currentSession) {
 			this.state.currentSession.interrupted = true;
-			this.state.currentSession.endTime = getCurrentTimestamp();
+			this.state.currentSession.endTime = stoppedAt;
 
 			// End the current active period if it's still running
 			if (this.state.currentSession.activePeriods.length > 0) {
@@ -456,7 +486,7 @@ export class PomodoroService {
 						this.state.currentSession.activePeriods.length - 1
 					];
 				if (!currentPeriod.endTime) {
-					currentPeriod.endTime = getCurrentTimestamp();
+					currentPeriod.endTime = stoppedAt;
 				}
 			}
 
@@ -517,18 +547,16 @@ export class PomodoroService {
 	}
 
 	private startTimer() {
-		if (!this.timerWorker) return;
+		if (!this.ticker) {
+			this.setupTicker();
+		}
 
-		this.timerWorker.postMessage({
-			command: "start",
-			duration: this.state.timeRemaining,
-		});
+		this.syncRunningTimeRemaining();
+		this.ticker?.start();
 	}
 
 	private stopTimer() {
-		if (!this.timerWorker) return;
-
-		this.timerWorker.postMessage({ command: "stop" });
+		this.ticker?.stop();
 	}
 
 	private resumeTimer() {
@@ -539,37 +567,47 @@ export class PomodoroService {
 			// Check for invalid start time (future dates)
 			if (startTime > now) {
 				// Reset session if start time is in the future
-				this.stopPomodoro();
+				void this.stopPomodoro();
 				return;
 			}
 
-			const totalDuration = this.state.currentSession.plannedDuration * 60;
-
 			if (!this.state.isRunning && this.state.timeRemaining > 0) {
 				// Session was paused, use stored time remaining (don't recalculate)
-				this.state.timeRemaining = Math.min(this.state.timeRemaining, totalDuration);
+				this.state.timeRemaining = Math.min(
+					this.state.timeRemaining,
+					clampPomodoroDurationSeconds(this.state.currentSession.plannedDuration * 60)
+				);
 			} else if (this.state.isRunning) {
-				// Calculate elapsed time based on active periods
-				const activePeriods = this.state.currentSession.activePeriods || [];
-				let totalActiveSeconds = 0;
-
-				for (const period of activePeriods) {
-					const start = new Date(period.startTime).getTime();
-					const end = period.endTime ? new Date(period.endTime).getTime() : now;
-					totalActiveSeconds += Math.floor((end - start) / 1000);
-				}
-
-				// Calculate time remaining based on actual active time
-				this.state.timeRemaining = Math.max(0, totalDuration - totalActiveSeconds);
+				this.state.timeRemaining = getSessionRemainingSeconds(
+					this.state.currentSession,
+					now
+				);
 			}
 
 			if (this.state.timeRemaining > 0 && this.state.isRunning) {
 				this.startTimer();
 			} else if (this.state.timeRemaining <= 0) {
 				// Timer would have completed while app was closed
-				this.completePomodoro();
+				void this.completePomodoro();
 			}
 		}
+	}
+
+	private syncRunningTimeRemaining(nowMs = Date.now()): number {
+		if (!this.state.currentSession) {
+			return this.state.timeRemaining;
+		}
+
+		if (this.state.isRunning) {
+			this.state.timeRemaining = getSessionRemainingSeconds(this.state.currentSession, nowMs);
+		}
+
+		this.plugin.emitter.trigger(EVENT_POMODORO_TICK, {
+			timeRemaining: this.state.timeRemaining,
+			session: this.state.currentSession,
+		});
+
+		return this.state.timeRemaining;
 	}
 
 	private async autoStartWorkSession(): Promise<void> {
@@ -651,8 +689,13 @@ export class PomodoroService {
 		}
 
 		const session = this.state.currentSession;
+		const completionTimeMs = getSessionCompletionTimeMs(session);
+		const completedAt =
+			completionTimeMs !== null
+				? formatLocalTimestamp(completionTimeMs)
+				: getCurrentTimestamp();
 		session.completed = true;
-		session.endTime = getCurrentTimestamp();
+		session.endTime = completedAt;
 
 		if (session.type === "work" && session.taskPath) {
 			this.lastWorkSessionTaskPath = session.taskPath;
@@ -662,7 +705,7 @@ export class PomodoroService {
 		if (session.activePeriods.length > 0) {
 			const currentPeriod = session.activePeriods[session.activePeriods.length - 1];
 			if (!currentPeriod.endTime) {
-				currentPeriod.endTime = getCurrentTimestamp();
+				currentPeriod.endTime = completedAt;
 			}
 		}
 
@@ -725,8 +768,7 @@ export class PomodoroService {
 			}
 		}
 
-		const message =
-			session.type === "work" ? `🍅 Pomodoro completed!` : "☕ Break completed!";
+		const message = session.type === "work" ? `🍅 Pomodoro completed!` : "☕ Break completed!";
 		const body =
 			session.type === "work"
 				? `Time for a ${shouldTakeLongBreak ? "long break 💤" : "short break ☕"}`
@@ -753,10 +795,9 @@ export class PomodoroService {
 
 			// Auto-start break if configured, otherwise just prepare the timer
 			if (this.plugin.settings.pomodoroAutoStartBreaks) {
-				const timeout = setTimeout(
-					() => this.startBreak(shouldTakeLongBreak),
-					1000
-				) as unknown as number;
+				const timeout = window.setTimeout(() => {
+					void this.startBreak(shouldTakeLongBreak);
+				}, 1000);
 				this.cleanupTimeouts.add(timeout);
 			}
 		} else {
@@ -766,9 +807,9 @@ export class PomodoroService {
 
 			// Auto-start work if configured, otherwise just prepare the timer
 			if (this.plugin.settings.pomodoroAutoStartWork) {
-				const timeout = setTimeout(() => {
-					this.autoStartWorkSession();
-				}, 1000) as unknown as number;
+				const timeout = window.setTimeout(() => {
+					void this.autoStartWorkSession();
+				}, 1000);
 				this.cleanupTimeouts.add(timeout);
 			}
 		}
@@ -807,7 +848,7 @@ export class PomodoroService {
 			this.activeAudioContexts.add(audioContext);
 
 			// Second beep
-			const beepTimeout = setTimeout(() => {
+			const beepTimeout = window.setTimeout(() => {
 				try {
 					const osc2 = audioContext.createOscillator();
 					osc2.connect(gainNode);
@@ -819,14 +860,14 @@ export class PomodoroService {
 					console.error("Failed to play second beep:", error);
 				}
 			}, 150);
-			this.cleanupTimeouts.add(beepTimeout as unknown as number);
+			this.cleanupTimeouts.add(beepTimeout);
 
 			// Clean up audio context after sounds complete
-			const cleanupTimeout = setTimeout(() => {
+			const cleanupTimeout = window.setTimeout(() => {
 				this.activeAudioContexts.delete(audioContext);
 				audioContext.close().catch(() => {});
 			}, 300);
-			this.cleanupTimeouts.add(cleanupTimeout as unknown as number);
+			this.cleanupTimeouts.add(cleanupTimeout);
 		} catch (error) {
 			console.error("Failed to play completion sound:", error);
 		}
@@ -855,42 +896,34 @@ export class PomodoroService {
 
 	adjustSessionTime(adjustmentSeconds: number): void {
 		if (this.state.currentSession) {
-			this.stopTimer();
-
-			// Apply the adjustment directly to timeRemaining
-			this.state.timeRemaining = Math.max(1, this.state.timeRemaining + adjustmentSeconds);
-
-			// Calculate the new total duration based on how much time has actually elapsed
-			const activePeriods = this.state.currentSession.activePeriods || [];
-			let totalActiveSeconds = 0;
-
-			for (const period of activePeriods) {
-				if (period.endTime) {
-					// Completed period
-					const start = new Date(period.startTime).getTime();
-					const end = new Date(period.endTime).getTime();
-					totalActiveSeconds += Math.floor((end - start) / 1000);
-				} else if (this.state.isRunning) {
-					// Current running period
-					const start = new Date(period.startTime).getTime();
-					const now = Date.now();
-					totalActiveSeconds += Math.floor((now - start) / 1000);
-				}
-			}
-
-			// New planned duration = elapsed time + remaining time
-			const newTotalSeconds = totalActiveSeconds + this.state.timeRemaining;
-			this.state.currentSession.plannedDuration = Math.ceil(newTotalSeconds / 60);
-
-			this.saveState();
-			this.startTimer();
-
-			// Emit tick event to update UI
-			this.plugin.emitter.trigger(EVENT_POMODORO_TICK, {
-				timeRemaining: this.state.timeRemaining,
-				session: this.state.currentSession,
-			});
+			const nextRemainingSeconds = clampPomodoroDurationSeconds(
+				this.state.timeRemaining + adjustmentSeconds
+			);
+			this.setCurrentSessionRemainingTime(nextRemainingSeconds);
 		}
+	}
+
+	setCurrentSessionRemainingTime(remainingSeconds: number): void {
+		if (!this.state.currentSession) {
+			return;
+		}
+
+		const nowMs = Date.now();
+		if (this.state.isRunning) {
+			this.state.timeRemaining = getSessionRemainingSeconds(this.state.currentSession, nowMs);
+		}
+
+		const nextRemainingSeconds = clampPomodoroDurationSeconds(remainingSeconds);
+		const elapsedSeconds = getActiveElapsedSeconds(this.state.currentSession, nowMs);
+		this.state.timeRemaining = nextRemainingSeconds;
+		this.state.currentSession.plannedDuration = (elapsedSeconds + nextRemainingSeconds) / 60;
+
+		void this.saveState();
+
+		this.plugin.emitter.trigger(EVENT_POMODORO_TICK, {
+			timeRemaining: this.state.timeRemaining,
+			session: this.state.currentSession,
+		});
 	}
 
 	public adjustPreparedTimer(newTimeInSeconds: number): void {
@@ -899,11 +932,8 @@ export class PomodoroService {
 			// Stop the timer if it's running
 			this.stopTimer();
 
-			// Ensure minimum 1 second duration
-			this.state.timeRemaining = Math.max(1, newTimeInSeconds);
-			this.saveState();
-
-			console.log("Adjusted prepared timer to:", this.state.timeRemaining, "seconds");
+			this.state.timeRemaining = clampPomodoroDurationSeconds(newTimeInSeconds);
+			void this.saveState();
 
 			// Trigger tick event to update UI
 			this.plugin.emitter.trigger(EVENT_POMODORO_TICK, {
@@ -945,12 +975,29 @@ export class PomodoroService {
 			return;
 		}
 
-		// Update the current session's task
-		this.state.currentSession.taskPath = task?.path;
+		const session = this.state.currentSession;
+		const previousTaskPath = session.taskPath;
+		const nextTaskPath = task?.path;
+		const shouldSwitchActiveTracking =
+			this.state.isRunning && session.type === "work" && previousTaskPath !== nextTaskPath;
 
-		if (task?.path) {
-			this.lastWorkSessionTaskPath = task.path;
-			this.lastSelectedTaskPath = task.path;
+		if (shouldSwitchActiveTracking && previousTaskPath) {
+			try {
+				const previousTask = await this.plugin.cacheManager.getTaskInfo(previousTaskPath);
+				if (previousTask) {
+					await this.plugin.taskService.stopTimeTracking(previousTask);
+				}
+			} catch (error) {
+				console.error("Failed to stop time tracking for previous Pomodoro task:", error);
+			}
+		}
+
+		// Update the current session's task
+		session.taskPath = nextTaskPath;
+
+		if (nextTaskPath) {
+			this.lastWorkSessionTaskPath = nextTaskPath;
+			this.lastSelectedTaskPath = nextTaskPath;
 			this.lastSelectedTaskPathLoaded = true;
 		} else {
 			this.lastWorkSessionTaskPath = undefined;
@@ -960,10 +1007,20 @@ export class PomodoroService {
 
 		await this.saveState();
 
+		if (shouldSwitchActiveTracking && task) {
+			try {
+				await this.plugin.taskService.startTimeTracking(task);
+			} catch (error) {
+				if (!error.message?.includes("Time tracking is already active")) {
+					console.error("Failed to start time tracking for new Pomodoro task:", error);
+				}
+			}
+		}
+
 		// Emit tick event to update UI
 		this.plugin.emitter.trigger(EVENT_POMODORO_TICK, {
 			timeRemaining: this.state.timeRemaining,
-			session: this.state.currentSession,
+			session,
 		});
 	}
 
@@ -1122,12 +1179,10 @@ export class PomodoroService {
 
 	cleanup() {
 		this.stopTimer();
-		if (this.timerWorker) {
-			this.timerWorker.terminate();
-			this.timerWorker = null;
-		}
+		this.ticker?.destroy();
+		this.ticker = null;
 		for (const timeout of this.cleanupTimeouts) {
-			clearTimeout(timeout);
+			window.clearTimeout(timeout);
 		}
 		this.cleanupTimeouts.clear();
 		for (const audioContext of this.activeAudioContexts) {
@@ -1136,7 +1191,7 @@ export class PomodoroService {
 			}
 		}
 		this.activeAudioContexts.clear();
-		this.saveState();
+		void this.saveState();
 	}
 
 	private async loadPluginHistory(): Promise<PomodoroSessionHistory[]> {
@@ -1145,9 +1200,7 @@ export class PomodoroService {
 		return Array.isArray(pluginHistory) ? pluginHistory : [];
 	}
 
-	private async loadPluginHistoryForDateKey(
-		dateKey: string
-	): Promise<PomodoroSessionHistory[]> {
+	private async loadPluginHistoryForDateKey(dateKey: string): Promise<PomodoroSessionHistory[]> {
 		return filterPomodoroSessionsByDateKey(await this.loadPluginHistory(), dateKey);
 	}
 
@@ -1214,7 +1267,7 @@ export class PomodoroService {
 
 	private async loadHistoryFromDailyNoteForDateKey(
 		dateKey: string,
-		allDailyNotes?: Record<string, any>
+		allDailyNotes?: Record<string, TFile>
 	): Promise<PomodoroSessionHistory[]> {
 		try {
 			if (!dateKey || !appHasDailyNotesPluginLoaded()) {
@@ -1223,8 +1276,8 @@ export class PomodoroService {
 
 			const dailyNotes = allDailyNotes ?? getAllDailyNotes();
 			const date = parseDateToLocal(dateKey);
-			const moment = (window as any).moment(date);
-			const dailyNote = getDailyNote(moment, dailyNotes);
+			const dailyNoteMoment = getDailyNoteMoment(date);
+			const dailyNote = getDailyNote(dailyNoteMoment, dailyNotes);
 
 			if (!dailyNote) {
 				return [];
@@ -1269,13 +1322,13 @@ export class PomodoroService {
 		}
 	}
 
-	private readPomodoroSessionsFromDailyNote(file: any): PomodoroSessionHistory[] {
+	private readPomodoroSessionsFromDailyNote(file: TFile): PomodoroSessionHistory[] {
 		const cache = this.plugin.app.metadataCache.getFileCache(file);
 		const frontmatter = cache?.frontmatter;
 		const pomodoroField = this.plugin.fieldMapper.toUserField("pomodoros");
 		const sessions = frontmatter?.[pomodoroField];
 
-		return Array.isArray(sessions) ? sessions : [];
+		return Array.isArray(sessions) ? sessions.filter(isPomodoroSessionHistory) : [];
 	}
 
 	/**
@@ -1313,14 +1366,14 @@ export class PomodoroService {
 			}
 
 			const sessionDate = parseDateToLocal(sessionDateKey);
-			const moment = (window as any).moment(sessionDate);
+			const dailyNoteMoment = getDailyNoteMoment(sessionDate);
 
 			// Get or create daily note
 			const allDailyNotes = getAllDailyNotes();
-			let dailyNote = getDailyNote(moment, allDailyNotes);
+			let dailyNote = getDailyNote(dailyNoteMoment, allDailyNotes);
 
 			if (!dailyNote) {
-				dailyNote = await createDailyNote(moment);
+				dailyNote = await createDailyNote(dailyNoteMoment);
 
 				// Validate that daily note was created successfully
 				if (!dailyNote) {
@@ -1335,8 +1388,10 @@ export class PomodoroService {
 
 			await this.plugin.app.fileManager.processFrontMatter(dailyNote, (frontmatter) => {
 				// Get existing sessions
-				const existingSessions = frontmatter[pomodoroField] || [];
-				const existingIds = new Set(existingSessions.map((s: any) => s.id));
+				const existingSessions = Array.isArray(frontmatter[pomodoroField])
+					? frontmatter[pomodoroField].filter(isPomodoroSessionHistory)
+					: [];
+				const existingIds = new Set(existingSessions.map((s) => s.id));
 
 				// Only add session if it doesn't already exist
 				if (!existingIds.has(session.id)) {
@@ -1357,14 +1412,14 @@ export class PomodoroService {
 	): Promise<void> {
 		try {
 			const date = parseDateToLocal(dateStr); // Use local date for daily note creation
-			const moment = (window as any).moment(date);
+			const dailyNoteMoment = getDailyNoteMoment(date);
 
 			// Get or create daily note
 			const allDailyNotes = getAllDailyNotes();
-			let dailyNote = getDailyNote(moment, allDailyNotes);
+			let dailyNote = getDailyNote(dailyNoteMoment, allDailyNotes);
 
 			if (!dailyNote) {
-				dailyNote = await createDailyNote(moment);
+				dailyNote = await createDailyNote(dailyNoteMoment);
 
 				// Validate that daily note was created successfully
 				if (!dailyNote) {
@@ -1379,8 +1434,10 @@ export class PomodoroService {
 
 			await this.plugin.app.fileManager.processFrontMatter(dailyNote, (frontmatter) => {
 				// Get existing sessions and append new ones
-				const existingSessions = frontmatter[pomodoroField] || [];
-				const existingIds = new Set(existingSessions.map((s: any) => s.id));
+				const existingSessions = Array.isArray(frontmatter[pomodoroField])
+					? frontmatter[pomodoroField].filter(isPomodoroSessionHistory)
+					: [];
+				const existingIds = new Set(existingSessions.map((s) => s.id));
 
 				// Only add sessions that don't already exist
 				const newSessions = sessions.filter((session) => !existingIds.has(session.id));

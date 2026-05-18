@@ -122,6 +122,7 @@ export interface TaskNotesSettings {
 	pomodoroSoundVolume: number; // 0-100
 	pomodoroStorageLocation: "plugin" | "daily-notes"; // where to store pomodoro history data
 	pomodoroMobileSidebar: "tab" | "left" | "right"; // where to open pomodoro view on mobile
+	showPomodoroInStatusBar: boolean;
 	// Editor settings
 	enableTaskLinkOverlay: boolean;
 	disableOverlayOnAlias: boolean;
@@ -210,12 +211,13 @@ export interface TaskNotesSettings {
 	autoCreateDefaultBasesFiles: boolean; // Auto-create missing default Base files on startup
 	// Command-to-file mappings for view commands (v4)
 	commandFileMapping: {
-		'open-calendar-view': string;
-		'open-kanban-view': string;
-		'open-tasks-view': string;
-		'open-advanced-calendar-view': string;
-		'open-agenda-view': string;
-		'relationships': string; // Bases file for unified relationships widget
+		"open-calendar-view": string;
+		"open-kanban-view": string;
+		"open-tasks-view": string;
+		"open-advanced-calendar-view": string;
+		"open-agenda-view": string;
+		"pomodoro-stats-base": string;
+		relationships: string; // Bases file for unified relationships widget
 		[key: string]: string; // Allow string indexing
 	};
 	// Recurring task behavior
@@ -289,6 +291,7 @@ export interface ICSIntegrationSettings {
 	autoExportPath: string; // Path where the ICS file should be saved
 	autoExportInterval: number; // Export interval in minutes (default: 60)
 	useDurationForExport: boolean; // Whether to use timeEstimate (duration) instead of due date for DTEND
+	excludeCompletedFromExport: boolean; // Whether to exclude completed tasks from ICS exports
 	// Task creation from ICS events
 	useICSEndAsDue: boolean; // Whether to use ICS event end time as task due date
 }
@@ -310,7 +313,7 @@ export interface GoogleCalendarExportSettings {
 	createAsAllDay: boolean; // Create as all-day events vs timed
 	defaultEventDuration: number; // Duration in minutes if timed (uses timeEstimate if available)
 	includeObsidianLink: boolean; // Include obsidian:// link in event description
-	defaultReminderMinutes: number | null; // Popup reminder X minutes before event (null = no reminder)
+	defaultReminderMinutes: number | number[] | null; // Popup reminder(s) X minutes before event (null = no reminder)
 }
 
 export type TimeblockAttachmentSearchOrder =

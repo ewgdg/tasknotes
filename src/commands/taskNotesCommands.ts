@@ -112,6 +112,27 @@ export function createTaskNotesCommandDefinitions(
 			},
 		},
 		{
+			id: "edit-current-task",
+			nameKey: "commands.editCurrentTask",
+			callback: async (ctx) => {
+				await ctx.openTaskEditModalForCurrentTask();
+			},
+		},
+		{
+			id: "add-project-to-current-task",
+			nameKey: "commands.addProjectToCurrentTask",
+			callback: async (ctx) => {
+				await ctx.addProjectToCurrentTask();
+			},
+		},
+		{
+			id: "add-subtask-to-current-note",
+			nameKey: "commands.addSubtaskToCurrentNote",
+			callback: async (ctx) => {
+				await ctx.addSubtaskToCurrentNote();
+			},
+		},
+		{
 			id: "go-to-today",
 			nameKey: "commands.goToTodayNote",
 			callback: async (ctx) => {
@@ -174,7 +195,12 @@ export function createTaskNotesCommandDefinitions(
 					);
 					CalendarExportService.downloadAllTasksICSFile(
 						allTasks,
-						ctx.i18n.translate.bind(ctx.i18n)
+						ctx.i18n.translate.bind(ctx.i18n),
+						{
+							excludeCompleted:
+								ctx.settings.icsIntegration.excludeCompletedFromExport ?? false,
+							completedStatuses: ctx.statusManager.getCompletedStatuses(),
+						}
 					);
 				} catch (error) {
 					console.error("Error exporting all tasks as ICS:", error);
@@ -274,6 +300,13 @@ export function createTaskNotesCommandDefinitions(
 			nameKey: "commands.createOrOpenTask",
 			callback: async (ctx) => {
 				await ctx.openTaskSelectorWithCreate();
+			},
+		},
+		{
+			id: "rollover-overdue-scheduled-tasks",
+			nameKey: "commands.rolloverOverdueScheduledTasks",
+			callback: async (ctx) => {
+				await ctx.rolloverOverdueScheduledTasks();
 			},
 		},
 	];
